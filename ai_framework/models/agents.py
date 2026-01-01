@@ -358,7 +358,7 @@ class FilterAgent(BaseAgent):
             config.latent_dim = latent_dim
         
         if filter_bandwidths_mhz is None:
-            filter_bandwidths_mhz = (5.0, 10.0, 20.0)
+            filter_bandwidths_mhz = (1.0, 10.0, 20.0)
         
         if filter_names is None:
             filter_names = tuple(f"{bw}MHz" for bw in filter_bandwidths_mhz)

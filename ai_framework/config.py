@@ -46,7 +46,7 @@ class BackboneConfig:
     param_output_dim: int = 32
     param_input_dim: int = 3
     conv_channels: Tuple[int, int] = (16, 32)
-    adaptive_pool_size: Tuple[int, int] = (4, 4)
+    adaptive_pool_size: Tuple[int, int] = (4, 1)  # (4, 1) for narrow time dimension inputs
 
 
 @dataclass
@@ -114,8 +114,8 @@ class FilterConfig(AgentConfig):
         filter_names: Human-readable names for each filter.
         temperature: Temperature for Gumbel-Softmax during training.
     """
-    filter_bandwidths_mhz: Tuple[float, ...] = (5.0, 10.0, 20.0)
-    filter_names: Tuple[str, ...] = ("5MHz", "10MHz", "20MHz")
+    filter_bandwidths_mhz: Tuple[float, ...] = (1.0, 10.0, 20.0)
+    filter_names: Tuple[str, ...] = ("1MHz", "10MHz", "20MHz")
     temperature: float = 1.0
     
     def __post_init__(self) -> None:

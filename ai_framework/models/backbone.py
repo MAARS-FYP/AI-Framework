@@ -45,7 +45,7 @@ class VisualBranch(nn.Module):
         self,
         output_dim: int = 32,
         conv_channels: Tuple[int, int] = (16, 32),
-        adaptive_pool_size: Tuple[int, int] = (4, 4),
+        adaptive_pool_size: Tuple[int, int] = (4, 1),  # (4, 1) for narrow time dimension
     ) -> None:
         super().__init__()
         
