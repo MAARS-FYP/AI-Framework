@@ -1,15 +1,20 @@
 """
-MAARS AI Framework - Demo Script
+MAARS AI Framework - Main Entry Point
 
-Demonstrates the complete RF receiver control pipeline:
-1. DSP: Raw I/Q → Spectrogram + Metrics
-2. Backbone: Features → Latent Vector
-3. Agents: Latent → Hardware Commands
+Supports two modes:
+1. demo: Demonstrates the complete RF receiver control pipeline
+2. train: Trains the backbone + multi-agent system
+
+Usage:
+    python -m ai_framework.main --mode demo
+    python -m ai_framework.main --mode train --epochs 100
 """
 
 from __future__ import annotations
 
+import argparse
 import logging
+import sys
 from typing import Optional
 
 import torch
@@ -132,5 +137,79 @@ def main(config: Optional[FrameworkConfig] = None) -> None:
     print(f"Filter (exploration): {filter_explore}")
 
 
+def run_training(args: argparse.Namespace) -> None:
+    """
+    Run training mode.
+    
+    Args:
+        args: Parsed command line arguments.
+    """
+    from ai_framework.train import TrainingConfig, train
+    
+    config = TrainingConfig(
+        csv_path=args.csv,
+        data_root=args.data_root,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        checkpoint_dir=args.checkpoint_dir,
+        latent_dim=args.latent_dim,
+        val_split=args.val_split,
+    )
+    
+    logger.info("Starting training mode...")
+    train(config, resume_from=args.resume)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="MAARS RF Control AI Framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    
+    subparsers = parser.add_subparsers(dest='mode', help='Execution mode')
+    
+    # Demo subparser
+    demo_parser = subparsers.add_parser('demo', help='Run demo mode')
+    
+    # Train subparser
+    train_parser = subparsers.add_parser('train', help='Run training mode')
+    train_parser.add_argument('--csv', type=str,
+                              default="ai_framework/dataset/data/optimal_control_dataset.csv",
+                              help="Path to CSV dataset")
+    train_parser.add_argument('--data-root', type=str,
+                              default="ai_framework/dataset/data",
+                              help="Root directory for data files")
+    train_parser.add_argument('--epochs', type=int, default=100,
+                              help="Number of training epochs")
+    train_parser.add_argument('--batch-size', type=int, default=4,
+                              help="Batch size")
+    train_parser.add_argument('--lr', type=float, default=1e-3,
+                              help="Learning rate")
+    train_parser.add_argument('--val-split', type=float, default=0.2,
+                              help="Validation split ratio")
+    train_parser.add_argument('--checkpoint-dir', type=str, default="checkpoints",
+                              help="Directory to save checkpoints")
+    train_parser.add_argument('--resume', type=str, default=None,
+                              help="Path to checkpoint to resume from")
+    train_parser.add_argument('--latent-dim', type=int, default=64,
+                              help="Latent dimension for backbone/agents")
+    
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    
+    if args.mode == 'train':
+        run_training(args)
+    elif args.mode == 'demo':
+        main()
+    else:
+        # Default to demo if no mode specified
+        print("Usage: python -m ai_framework.main {demo|train}")
+        print("\nExamples:")
+        print("  python -m ai_framework.main demo")
+        print("  python -m ai_framework.main train --epochs 100 --batch-size 4")
+        sys.exit(1)
