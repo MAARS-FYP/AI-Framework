@@ -105,8 +105,8 @@ def main(config: Optional[FrameworkConfig] = None) -> None:
     
     # --- 4. Agents: Generate Hardware Commands ---
     with torch.no_grad():
-        lna_current = lna.get_action(z)
-        mixer_freq, mixer_amp = mixer.get_action(z)
+        lna_voltage = lna.get_action(z)
+        mixer_freq, mixer_atten = mixer.get_action(z)
         filter_id = filter_agent.get_action(z)
         if_gain = if_amp.get_action(z)
     
@@ -119,10 +119,10 @@ def main(config: Optional[FrameworkConfig] = None) -> None:
         filter_name = filter_agent.filter_names[filter_id[i].item()]
         print(
             f"Sample {i}: "
-            f"LNA={lna_current[i]:.2f}mA | "
-            f"LO={mixer_freq[i]:.1f}MHz, {mixer_amp[i]:.3f}V | "
+            f"LNA={lna_voltage[i]:.2f}V | "
+            f"LO={mixer_freq[i]:.1f}MHz, Atten={mixer_atten[i]:.1f}dB | "
             f"Filter={filter_name} | "
-            f"IF_Amp={if_gain[i]:.2f}V"
+            f"IF_Amp={if_gain[i]:.2f}dB"
         )
     
     print("=" * 70)

@@ -151,19 +151,14 @@ def get_dataset_stats(csv_path: Union[str, Path]) -> dict:
             'mean': df['Input_Power_dBm'].mean(),
         },
         'lna_target': {
-            'min': df['Optimal_LNA_Bias_mA'].min(),
-            'max': df['Optimal_LNA_Bias_mA'].max(),
-            'mean': df['Optimal_LNA_Bias_mA'].mean(),
+            'min': df['Optimal_LNA_Voltage_V'].min(),
+            'max': df['Optimal_LNA_Voltage_V'].max(),
+            'mean': df['Optimal_LNA_Voltage_V'].mean(),
         },
-        'mixer_freq_target': {
-            'min': df['Optimal_Mixer_Frequency_MHz'].min(),
-            'max': df['Optimal_Mixer_Frequency_MHz'].max(),
-            'mean': df['Optimal_Mixer_Frequency_MHz'].mean(),
-        },
-        'mixer_amp_target': {
-            'min': df['Optimal_Mixer_Amplitude_V'].min(),
-            'max': df['Optimal_Mixer_Amplitude_V'].max(),
-            'mean': df['Optimal_Mixer_Amplitude_V'].mean(),
+        'mixer_power_target': {
+            'min': df['Optimal_LO_Power_dBm'].min(),
+            'max': df['Optimal_LO_Power_dBm'].max(),
+            'mean': df['Optimal_LO_Power_dBm'].mean(),
         },
         'if_gain_target': {
             'min': df['Optimal_IF_Gain_dB'].min(),

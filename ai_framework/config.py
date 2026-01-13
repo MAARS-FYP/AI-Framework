@@ -67,40 +67,19 @@ class AgentConfig:
 class LNAConfig(AgentConfig):
     """Configuration for the LNA (Low Noise Amplifier) Agent.
     
-    Controls bias current for the LNA.
+    Controls supply voltage for the LNA.
+    Binary classification: 3V or 5V only.
     
     Attributes:
-        max_current_ma: Maximum bias current in milliamps.
+        voltage_levels: Available voltage levels (3V, 5V).
+        voltage_names: Human-readable names for each level.
     """
-    output_dim: int = 1
-    max_current_ma: float = 20.0
-
-
-@dataclass
-class MixerConfig(AgentConfig):
-    """Configuration for the Mixer (Local Oscillator) Agent.
+    voltage_levels: Tuple[float, ...] = (3.0, 5.0)
+    voltage_names: Tuple[str, ...] = ("3V", "5V")
     
-    Controls LO frequency and amplitude.
-    
-    Attributes:
-        min_freq_mhz: Minimum LO frequency in MHz.
-        max_freq_mhz: Maximum LO frequency in MHz.
-        max_amp_v: Maximum LO amplitude in Volts.
-    """
-    output_dim: int = 2  # Frequency + Amplitude
-    min_freq_mhz: float = 2405.0
-    max_freq_mhz: float = 2483.0
-    max_amp_v: float = 1.0
-    
-    @property
-    def freq_range_mhz(self) -> float:
-        """Total frequency range in MHz."""
-        return self.max_freq_mhz - self.min_freq_mhz
-    
-    @property
-    def center_freq_mhz(self) -> float:
-        """Center frequency in MHz."""
-        return (self.min_freq_mhz + self.max_freq_mhz) / 2
+    def __post_init__(self) -> None:
+        # Output dim = number of voltage choices (binary classification)
+        self.output_dim = len(self.voltage_levels)
 
 
 @dataclass
@@ -129,16 +108,37 @@ class FilterConfig(AgentConfig):
 
 
 @dataclass
+class MixerConfig(AgentConfig):
+    """Configuration for the Mixer (Local Oscillator) Agent.
+    
+    Controls LO frequency and attenuation.
+    
+    Attributes:
+        min_freq_mhz: Minimum LO frequency in MHz.
+        max_freq_mhz: Maximum LO frequency in MHz.
+        min_atten_db: Minimum attenuation in dB (most attenuation).
+        max_atten_db: Maximum attenuation in dB (no attenuation).
+    """
+    output_dim: int = 2  # frequency + attenuation
+    min_freq_mhz: float = 2405.0
+    max_freq_mhz: float = 2483.0
+    min_atten_db: float = -26.0  # Maximum attenuation
+    max_atten_db: float = 0.0    # No attenuation
+
+
+@dataclass
 class IFAmpConfig(AgentConfig):
     """Configuration for the IF Amplifier Agent.
     
-    Controls IF amplifier gain voltage.
+    Controls IF amplifier gain in dB.
     
     Attributes:
-        max_gain_v: Maximum gain control voltage in Volts.
+        min_gain_db: Minimum gain in dB.
+        max_gain_db: Maximum gain in dB.
     """
     output_dim: int = 1
-    max_gain_v: float = 3.3
+    min_gain_db: float = -6.0
+    max_gain_db: float = 26.0
 
 
 @dataclass

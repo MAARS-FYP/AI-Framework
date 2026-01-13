@@ -25,8 +25,7 @@ logger = get_logger(__name__)
 class AgentLossWeights:
     """Weights for combining agent losses."""
     lna: float = 1.0
-    mixer_freq: float = 1.0
-    mixer_amp: float = 1.0
+    mixer: float = 1.0  # Only trains LO power, frequency is symbolic
     filter: float = 1.0
     if_amp: float = 1.0
 
@@ -36,8 +35,8 @@ class TrainingMetrics:
     """Container for training metrics."""
     total_loss: float
     lna_loss: float
-    mixer_freq_loss: float
-    mixer_amp_loss: float
+    lna_accuracy: float
+    mixer_loss: float  # LO power loss only
     filter_loss: float
     filter_accuracy: float
     if_amp_loss: float
@@ -46,8 +45,8 @@ class TrainingMetrics:
         return {
             'total_loss': self.total_loss,
             'lna_loss': self.lna_loss,
-            'mixer_freq_loss': self.mixer_freq_loss,
-            'mixer_amp_loss': self.mixer_amp_loss,
+            'lna_accuracy': self.lna_accuracy,
+            'mixer_loss': self.mixer_loss,
             'filter_loss': self.filter_loss,
             'filter_accuracy': self.filter_accuracy,
             'if_amp_loss': self.if_amp_loss,
@@ -64,13 +63,14 @@ class MultiAgentTrainer:
     
     Args:
         backbone: UnifiedBackbone network.
-        lna_agent: LNA control agent.
-        mixer_agent: Mixer control agent.
+        lna_agent: LNA control agent (binary classification: 3V or 5V).
+        mixer_agent: Mixer/LO control agent (only LO power trained, freq is symbolic).
         filter_agent: Filter selection agent.
         if_amp_agent: IF amplifier control agent.
         device: Device to train on.
         loss_weights: Weights for combining agent losses.
-        mixer_freq_range: (min, max) frequency in MHz for normalization.
+        if_amp_db_range: (min, max) gain in dB for IF Amp normalization.
+        mixer_power_range: (min, max) LO power in dBm for normalization.
     """
     
     def __init__(
@@ -82,10 +82,8 @@ class MultiAgentTrainer:
         if_amp_agent: nn.Module,
         device: torch.device,
         loss_weights: Optional[AgentLossWeights] = None,
-        mixer_freq_range: Tuple[float, float] = (2405.0, 2483.0),
-        lna_max_ma: float = 20.0,
-        mixer_max_amp: float = 1.0,
-        if_amp_max_v: float = 3.3,
+        if_amp_db_range: Tuple[float, float] = (-6.0, 26.0),
+        mixer_power_range: Tuple[float, float] = (0.0, 25.0),  # Typical LO power range
     ) -> None:
         self.backbone = backbone
         self.lna_agent = lna_agent
@@ -96,32 +94,20 @@ class MultiAgentTrainer:
         self.loss_weights = loss_weights or AgentLossWeights()
         
         # Normalization ranges
-        self.mixer_freq_min, self.mixer_freq_max = mixer_freq_range
-        self.lna_max_ma = lna_max_ma
-        self.mixer_max_amp = mixer_max_amp
-        self.if_amp_max_v = if_amp_max_v
+        self.if_amp_min_db, self.if_amp_max_db = if_amp_db_range
+        self.mixer_power_min, self.mixer_power_max = mixer_power_range
         
         # Loss functions
-        self.mse_loss = nn.MSELoss()
-        self.ce_loss = nn.CrossEntropyLoss()
-    
-    def _normalize_lna_target(self, target: Tensor) -> Tensor:
-        """Normalize LNA target to [0, 1] range."""
-        return target / self.lna_max_ma
-    
-    def _normalize_mixer_freq_target(self, target: Tensor) -> Tensor:
-        """Normalize mixer frequency target to [0, 1] range."""
-        return (target - self.mixer_freq_min) / (self.mixer_freq_max - self.mixer_freq_min)
-    
-    def _normalize_mixer_amp_target(self, target: Tensor) -> Tensor:
-        """Normalize mixer amplitude target to [0, 1] range."""
-        return target / self.mixer_max_amp
+        self.mse_loss = nn.MSELoss()  # For Mixer power and IF Amp regression
+        self.ce_loss = nn.CrossEntropyLoss()  # For LNA and Filter classification
     
     def _normalize_if_amp_target(self, target: Tensor) -> Tensor:
-        """Normalize IF amp target to [0, 1] range."""
-        # IF gain in dB can be negative, normalize to reasonable range
-        # Assuming -20 to +20 dB range, shift to [0, 1]
-        return (target + 20) / 40
+        """Normalize IF amp dB target to [0, 1] range."""
+        return (target - self.if_amp_min_db) / (self.if_amp_max_db - self.if_amp_min_db)
+    
+    def _normalize_mixer_power_target(self, target: Tensor) -> Tensor:
+        """Normalize mixer LO power target to [0, 1] range."""
+        return (target - self.mixer_power_min) / (self.mixer_power_max - self.mixer_power_min)
     
     def compute_losses(
         self,
@@ -140,22 +126,22 @@ class MultiAgentTrainer:
         """
         losses = {}
         
-        # --- LNA Loss (Regression) ---
-        lna_raw = self.lna_agent.forward(z)  # Raw output before sigmoid
-        lna_pred = torch.sigmoid(lna_raw).squeeze(-1)  # [0, 1]
-        lna_target_norm = self._normalize_lna_target(targets['lna'])
-        losses['lna'] = self.mse_loss(lna_pred, lna_target_norm)
+        # --- LNA Loss (Binary Classification: 3V or 5V) ---
+        lna_logits = self.lna_agent.forward(z)  # [batch, 2]
+        losses['lna'] = self.ce_loss(lna_logits, targets['lna'])
         
-        # --- Mixer Loss (Regression, dual output) ---
-        mixer_raw = self.mixer_agent.forward(z)  # [batch, 2]
-        mixer_freq_pred = torch.sigmoid(mixer_raw[:, 0])  # [0, 1]
-        mixer_amp_pred = torch.sigmoid(mixer_raw[:, 1])   # [0, 1]
+        # Calculate LNA accuracy
+        lna_preds = torch.argmax(lna_logits, dim=1)
+        lna_correct = (lna_preds == targets['lna']).float().mean()
+        losses['lna_accuracy'] = lna_correct
         
-        mixer_freq_target_norm = self._normalize_mixer_freq_target(targets['mixer_freq'])
-        mixer_amp_target_norm = self._normalize_mixer_amp_target(targets['mixer_amp'])
-        
-        losses['mixer_freq'] = self.mse_loss(mixer_freq_pred, mixer_freq_target_norm)
-        losses['mixer_amp'] = self.mse_loss(mixer_amp_pred, mixer_amp_target_norm)
+        # --- Mixer Loss (Regression - only LO power, frequency is symbolic placeholder) ---
+        mixer_raw = self.mixer_agent.forward(z)  # [batch, 2] but only train output[1] (power)
+        # Output 0 = frequency (placeholder, not trained - will be symbolic logic)
+        # Output 1 = LO power
+        mixer_power_pred = torch.sigmoid(mixer_raw[:, 1])  # [0, 1]
+        mixer_power_target_norm = self._normalize_mixer_power_target(targets['mixer_power'])
+        losses['mixer'] = self.mse_loss(mixer_power_pred, mixer_power_target_norm)
         
         # --- Filter Loss (Classification) ---
         filter_logits = self.filter_agent.forward(z)  # [batch, num_classes]
@@ -175,8 +161,7 @@ class MultiAgentTrainer:
         # --- Total Weighted Loss ---
         total_loss = (
             self.loss_weights.lna * losses['lna'] +
-            self.loss_weights.mixer_freq * losses['mixer_freq'] +
-            self.loss_weights.mixer_amp * losses['mixer_amp'] +
+            self.loss_weights.mixer * losses['mixer'] +
             self.loss_weights.filter * losses['filter'] +
             self.loss_weights.if_amp * losses['if_amp']
         )
@@ -219,8 +204,8 @@ class MultiAgentTrainer:
         return {
             'total_loss': total_loss.item(),
             'lna_loss': losses['lna'].item(),
-            'mixer_freq_loss': losses['mixer_freq'].item(),
-            'mixer_amp_loss': losses['mixer_amp'].item(),
+            'lna_accuracy': losses['lna_accuracy'].item(),
+            'mixer_loss': losses['mixer'].item(),
             'filter_loss': losses['filter'].item(),
             'filter_accuracy': losses['filter_accuracy'].item(),
             'if_amp_loss': losses['if_amp'].item(),
@@ -254,8 +239,8 @@ class MultiAgentTrainer:
         return {
             'total_loss': total_loss.item(),
             'lna_loss': losses['lna'].item(),
-            'mixer_freq_loss': losses['mixer_freq'].item(),
-            'mixer_amp_loss': losses['mixer_amp'].item(),
+            'lna_accuracy': losses['lna_accuracy'].item(),
+            'mixer_loss': losses['mixer'].item(),
             'filter_loss': losses['filter'].item(),
             'filter_accuracy': losses['filter_accuracy'].item(),
             'if_amp_loss': losses['if_amp'].item(),
@@ -292,8 +277,8 @@ def train_one_epoch(
     # Accumulators
     total_loss_sum = 0.0
     lna_loss_sum = 0.0
-    mixer_freq_loss_sum = 0.0
-    mixer_amp_loss_sum = 0.0
+    lna_acc_sum = 0.0
+    mixer_loss_sum = 0.0
     filter_loss_sum = 0.0
     filter_acc_sum = 0.0
     if_amp_loss_sum = 0.0
@@ -304,8 +289,8 @@ def train_one_epoch(
         
         total_loss_sum += losses['total_loss']
         lna_loss_sum += losses['lna_loss']
-        mixer_freq_loss_sum += losses['mixer_freq_loss']
-        mixer_amp_loss_sum += losses['mixer_amp_loss']
+        lna_acc_sum += losses['lna_accuracy']
+        mixer_loss_sum += losses['mixer_loss']
         filter_loss_sum += losses['filter_loss']
         filter_acc_sum += losses['filter_accuracy']
         if_amp_loss_sum += losses['if_amp_loss']
@@ -315,8 +300,8 @@ def train_one_epoch(
             logger.info(
                 f"Epoch {epoch} [{batch_idx}/{len(train_loader)}] "
                 f"Loss: {losses['total_loss']:.4f} "
-                f"(LNA: {losses['lna_loss']:.4f}, "
-                f"Mixer: {losses['mixer_freq_loss']:.4f}/{losses['mixer_amp_loss']:.4f}, "
+                f"(LNA: {losses['lna_loss']:.4f} acc={losses['lna_accuracy']*100:.1f}%, "
+                f"Mixer: {losses['mixer_loss']:.4f}, "
                 f"Filter: {losses['filter_loss']:.4f} acc={losses['filter_accuracy']*100:.1f}%, "
                 f"IF: {losses['if_amp_loss']:.4f})"
             )
@@ -324,8 +309,8 @@ def train_one_epoch(
     return TrainingMetrics(
         total_loss=total_loss_sum / num_batches,
         lna_loss=lna_loss_sum / num_batches,
-        mixer_freq_loss=mixer_freq_loss_sum / num_batches,
-        mixer_amp_loss=mixer_amp_loss_sum / num_batches,
+        lna_accuracy=lna_acc_sum / num_batches,
+        mixer_loss=mixer_loss_sum / num_batches,
         filter_loss=filter_loss_sum / num_batches,
         filter_accuracy=filter_acc_sum / num_batches,
         if_amp_loss=if_amp_loss_sum / num_batches,
@@ -357,8 +342,8 @@ def evaluate(
     # Accumulators
     total_loss_sum = 0.0
     lna_loss_sum = 0.0
-    mixer_freq_loss_sum = 0.0
-    mixer_amp_loss_sum = 0.0
+    lna_acc_sum = 0.0
+    mixer_loss_sum = 0.0
     filter_loss_sum = 0.0
     filter_acc_sum = 0.0
     if_amp_loss_sum = 0.0
@@ -369,8 +354,8 @@ def evaluate(
         
         total_loss_sum += losses['total_loss']
         lna_loss_sum += losses['lna_loss']
-        mixer_freq_loss_sum += losses['mixer_freq_loss']
-        mixer_amp_loss_sum += losses['mixer_amp_loss']
+        lna_acc_sum += losses['lna_accuracy']
+        mixer_loss_sum += losses['mixer_loss']
         filter_loss_sum += losses['filter_loss']
         filter_acc_sum += losses['filter_accuracy']
         if_amp_loss_sum += losses['if_amp_loss']
@@ -379,8 +364,8 @@ def evaluate(
     return TrainingMetrics(
         total_loss=total_loss_sum / num_batches,
         lna_loss=lna_loss_sum / num_batches,
-        mixer_freq_loss=mixer_freq_loss_sum / num_batches,
-        mixer_amp_loss=mixer_amp_loss_sum / num_batches,
+        lna_accuracy=lna_acc_sum / num_batches,
+        mixer_loss=mixer_loss_sum / num_batches,
         filter_loss=filter_loss_sum / num_batches,
         filter_accuracy=filter_acc_sum / num_batches,
         if_amp_loss=if_amp_loss_sum / num_batches,

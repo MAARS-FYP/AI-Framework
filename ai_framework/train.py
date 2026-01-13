@@ -64,17 +64,15 @@ class TrainingConfig:
     # Model
     latent_dim: int = 64
     
-    # Hardware ranges (for normalization)
-    lna_max_ma: float = 20.0
-    mixer_min_freq_mhz: float = 2405.0
-    mixer_max_freq_mhz: float = 2483.0
-    mixer_max_amp_v: float = 1.0
-    if_amp_max_v: float = 3.3
+    # Hardware ranges (for normalization - IF Amp only, LNA is classification)
+    if_amp_min_db: float = -6.0
+    if_amp_max_db: float = 26.0
+    mixer_power_min: float = 0.0  # Min LO power in dBm
+    mixer_power_max: float = 25.0  # Max LO power in dBm
     
     # Loss weights
     lna_loss_weight: float = 1.0
-    mixer_freq_loss_weight: float = 1.0
-    mixer_amp_loss_weight: float = 1.0
+    mixer_loss_weight: float = 1.0  # Only trains LO power
     filter_loss_weight: float = 1.0
     if_amp_loss_weight: float = 1.0
 
@@ -211,23 +209,26 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
     # Backbone config - adjust param_input_dim for our 3 metrics
     backbone_config = BackboneConfig(
         latent_dim=config.latent_dim,
-        param_input_dim=3,  # EVM, Input Power, PA Input Power
+        param_input_dim=3,  # EVM, Power Post LNA, Power Post PA
     )
     
     # Need to check spectrogram shape to configure backbone properly
-    # STFT complex is (1024, 8) -> 2 channels for (real, imag)
+    # STFT complex is (1024, 5) -> 2 channels for (real, imag)
     backbone = UnifiedBackbone(config=backbone_config).to(device)
     
     lna_agent = LNAAgent(
         latent_dim=config.latent_dim,
-        max_current_ma=config.lna_max_ma,
+        voltage_levels=(3.0, 5.0),  # Binary classification
     ).to(device)
     
+    # Mixer agent: 2 outputs (freq + power), but only power is trained
+    # Frequency output is placeholder for symbolic logic (user will implement)
     mixer_agent = MixerAgent(
         latent_dim=config.latent_dim,
-        min_freq_mhz=config.mixer_min_freq_mhz,
-        max_freq_mhz=config.mixer_max_freq_mhz,
-        max_amp_v=config.mixer_max_amp_v,
+        min_freq_mhz=2405.0,  # Placeholder - not trained
+        max_freq_mhz=2483.0,  # Placeholder - not trained
+        min_atten_db=config.mixer_power_min,  # Using power range
+        max_atten_db=config.mixer_power_max,
     ).to(device)
     
     filter_agent = FilterAgent(
@@ -237,7 +238,8 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
     
     if_amp_agent = IFAmpAgent(
         latent_dim=config.latent_dim,
-        max_gain_v=config.if_amp_max_v,
+        min_gain_db=config.if_amp_min_db,
+        max_gain_db=config.if_amp_max_db,
     ).to(device)
     
     # --- Optimizer ---
@@ -270,8 +272,7 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
     # --- Trainer ---
     loss_weights = AgentLossWeights(
         lna=config.lna_loss_weight,
-        mixer_freq=config.mixer_freq_loss_weight,
-        mixer_amp=config.mixer_amp_loss_weight,
+        mixer=config.mixer_loss_weight,
         filter=config.filter_loss_weight,
         if_amp=config.if_amp_loss_weight,
     )
@@ -284,10 +285,8 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
         if_amp_agent=if_amp_agent,
         device=device,
         loss_weights=loss_weights,
-        mixer_freq_range=(config.mixer_min_freq_mhz, config.mixer_max_freq_mhz),
-        lna_max_ma=config.lna_max_ma,
-        mixer_max_amp=config.mixer_max_amp_v,
-        if_amp_max_v=config.if_amp_max_v,
+        if_amp_db_range=(config.if_amp_min_db, config.if_amp_max_db),
+        mixer_power_range=(config.mixer_power_min, config.mixer_power_max),
     )
     
     # --- Resume from checkpoint ---

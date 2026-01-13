@@ -128,36 +128,38 @@ class BaseAgent(nn.Module):
         raise NotImplementedError("Child agents must define get_action()")
 
 
-# --- 1. LNA Agent (Continuous Bias Current) ---
+# --- 1. LNA Agent (Binary Classification: 3V or 5V) ---
 class LNAAgent(BaseAgent):
     """
-    Low Noise Amplifier bias current control agent.
+    Low Noise Amplifier voltage control agent.
     
-    Outputs continuous bias current value between 0 and max_current_ma.
-    Uses sigmoid activation for bounded positive output.
+    Binary classification for voltage selection: 3V or 5V.
+    Uses softmax activation for discrete selection.
     
     Args:
         config: Agent configuration (optional).
         latent_dim: Override for latent dimension.
-        max_current_ma: Maximum bias current in mA. Default: 20.0
+        voltage_levels: Tuple of available voltages (default: 3V, 5V).
+        voltage_names: Human-readable names for each level.
     
     Input Shape:
         [batch, latent_dim]
     
     Output Shape:
-        [batch] - Current values in mA
+        [batch] - Voltage class indices (0=3V, 1=5V)
     
     Example:
-        >>> lna = LNAAgent(latent_dim=64, max_current_ma=20.0)
+        >>> lna = LNAAgent(latent_dim=64)
         >>> z = torch.randn(4, 64)
-        >>> currents = lna.get_action(z)  # Shape: [4]
+        >>> voltage_idx = lna.get_action(z)  # Shape: [4], values 0 or 1
     """
     
     def __init__(
         self,
         config: Optional[AgentConfig] = None,
         latent_dim: Optional[int] = None,
-        max_current_ma: float = 20.0,
+        voltage_levels: Tuple[float, ...] = (3.0, 5.0),
+        voltage_names: Tuple[str, ...] = ("3V", "5V"),
     ) -> None:
         if config is None:
             config = AgentConfig()
@@ -165,158 +167,68 @@ class LNAAgent(BaseAgent):
         if latent_dim is not None:
             config.latent_dim = latent_dim
         
-        config.output_dim = 1
+        # Output dim = number of voltage choices (binary classification)
+        config.output_dim = len(voltage_levels)
         super().__init__(config)
         
-        self.max_ma = max_current_ma
+        self.voltage_levels = voltage_levels
+        self.voltage_names = voltage_names
         
-        logger.info(f"LNAAgent: max_current_ma={self.max_ma}")
+        # For convenience: map index to voltage
+        self.voltage_map = {i: v for i, v in enumerate(voltage_levels)}
+        
+        logger.info(f"LNAAgent: voltage_levels={self.voltage_levels}V (binary classification)")
 
     def get_action(
         self,
         z: Tensor,
         deterministic: bool = True,
         as_tensor: bool = True,
-        noise_scale: float = 0.1,
-    ) -> Union[Tensor, List[float]]:
+        return_voltage: bool = False,
+    ) -> Union[Tensor, List[int], List[float]]:
         """
-        Get LNA bias current(s) from latent vector.
+        Get LNA voltage selection(s) from latent vector.
         
         Args:
             z: Latent vector. Shape: [batch, latent_dim]
-            deterministic: If True, return direct output.
-                If False, add exploration noise.
+            deterministic: If True, use argmax. If False, sample from softmax.
             as_tensor: If True, return tensor. If False, return list.
-            noise_scale: Scale of exploration noise (fraction of max_ma).
+            return_voltage: If True, return voltage values instead of indices.
         
         Returns:
-            Current value(s) in mA.
-            Shape: [batch] if as_tensor=True, else list of floats.
+            Voltage index/indices or voltage values.
+            Shape: [batch] if as_tensor=True, else list.
         """
-        raw_val = self.forward(z)
+        logits = self.forward(z)  # [batch, 2]
         
-        # Sigmoid bounds output to [0, 1] (Current cannot be negative)
-        norm_val = torch.sigmoid(raw_val)
-        
-        # Scale to max hardware current
-        currents = norm_val.squeeze(-1) * self.max_ma
-        
-        if not deterministic:
-            noise = torch.randn_like(currents) * self.max_ma * noise_scale
-            currents = torch.clamp(currents + noise, 0.0, self.max_ma)
-        
-        if as_tensor:
-            return currents
+        if deterministic:
+            indices = torch.argmax(logits, dim=1)
         else:
-            return [float(c.item()) for c in currents]
-
-
-# --- 2. Mixer Agent (Dual Continuous Controls) ---
-class MixerAgent(BaseAgent):
-    """
-    Local Oscillator (Mixer) control agent with dual outputs.
-    
-    Outputs both LO frequency and amplitude simultaneously.
-    Frequency range: 2405 MHz to 2483 MHz (absolute, not offset).
-    Amplitude uses sigmoid (positive only).
-    
-    Args:
-        config: Agent configuration (optional).
-        latent_dim: Override for latent dimension.
-        min_freq_mhz: Minimum LO frequency in MHz. Default: 2405.0
-        max_freq_mhz: Maximum LO frequency in MHz. Default: 2483.0
-        max_amp_v: Maximum amplitude in Volts. Default: 1.0
-    
-    Input Shape:
-        [batch, latent_dim]
-    
-    Output Shape:
-        Tuple of ([batch], [batch]) - (frequency MHz, amplitude V)
-    
-    Example:
-        >>> mixer = MixerAgent(latent_dim=64)
-        >>> z = torch.randn(4, 64)
-        >>> freq, amp = mixer.get_action(z)  # freq in MHz, amp in V
-    """
-    
-    def __init__(
-        self,
-        config: Optional[AgentConfig] = None,
-        latent_dim: Optional[int] = None,
-        min_freq_mhz: float = 2405.0,
-        max_freq_mhz: float = 2483.0,
-        max_amp_v: float = 1.0,
-    ) -> None:
-        if config is None:
-            config = AgentConfig()
+            # Sample from categorical distribution for exploration
+            probs = F.softmax(logits, dim=1)
+            indices = torch.multinomial(probs, num_samples=1).squeeze(1)
         
-        if latent_dim is not None:
-            config.latent_dim = latent_dim
-        
-        # Output 2 values: frequency and amplitude
-        config.output_dim = 2
-        super().__init__(config)
-        
-        self.min_freq = min_freq_mhz
-        self.max_freq = max_freq_mhz
-        self.max_amp = max_amp_v
-        
-        logger.info(
-            f"MixerAgent: freq_range={self.min_freq}-{self.max_freq}MHz, "
-            f"max_amp_v={self.max_amp}"
-        )
-
-    def get_action(
-        self,
-        z: Tensor,
-        deterministic: bool = True,
-        as_tensor: bool = True,
-        noise_scale: float = 0.1,
-    ) -> Union[Tuple[Tensor, Tensor], Tuple[List[float], List[float]]]:
-        """
-        Get mixer LO frequency and amplitude from latent vector.
-        
-        Args:
-            z: Latent vector. Shape: [batch, latent_dim]
-            deterministic: If True, return direct output.
-                If False, add exploration noise.
-            as_tensor: If True, return tensors. If False, return lists.
-            noise_scale: Scale of exploration noise.
-        
-        Returns:
-            Tuple of (frequency_mhz, amplitude_v).
-            Each has shape [batch] if as_tensor=True, else list of floats.
-        """
-        raw_val = self.forward(z)  # Shape: [batch, 2]
-        
-        # Split the two outputs
-        raw_freq = raw_val[:, 0]  # Shape: [batch]
-        raw_amp = raw_val[:, 1]   # Shape: [batch]
-        
-        # Frequency: sigmoid to [0,1], then scale to [min_freq, max_freq]
-        freq_norm = torch.sigmoid(raw_freq)
-        freq_mhz = self.min_freq + freq_norm * (self.max_freq - self.min_freq)
-        
-        # Amplitude must be positive -> Sigmoid
-        amp_volts = torch.sigmoid(raw_amp) * self.max_amp
-        
-        if not deterministic:
-            freq_range = self.max_freq - self.min_freq
-            freq_noise = torch.randn_like(freq_mhz) * freq_range * noise_scale
-            amp_noise = torch.randn_like(amp_volts) * self.max_amp * noise_scale
-            freq_mhz = torch.clamp(freq_mhz + freq_noise, self.min_freq, self.max_freq)
-            amp_volts = torch.clamp(amp_volts + amp_noise, 0.0, self.max_amp)
-        
-        if as_tensor:
-            return freq_mhz, amp_volts
-        else:
-            return (
-                [float(f.item()) for f in freq_mhz],
-                [float(a.item()) for a in amp_volts],
+        if return_voltage:
+            voltages = torch.tensor(
+                [self.voltage_levels[i.item()] for i in indices],
+                device=z.device
             )
+            if as_tensor:
+                return voltages
+            else:
+                return [float(v.item()) for v in voltages]
+        
+        if as_tensor:
+            return indices
+        else:
+            return [int(i.item()) for i in indices]
+    
+    def get_voltage_from_index(self, idx: int) -> float:
+        """Convert class index to voltage value."""
+        return self.voltage_levels[idx]
 
 
-# --- 3. Filter Agent (Discrete Selection) ---
+# --- 2. Filter Agent (Discrete Selection) ---
 class FilterAgent(BaseAgent):
     """
     Hardware filter selection agent.
@@ -430,36 +342,148 @@ class FilterAgent(BaseAgent):
         return F.gumbel_softmax(logits, tau=self.temperature, hard=False)
 
 
-# --- 4. IF Amplifier Agent (Continuous Gain) ---
-class IFAmpAgent(BaseAgent):
+# --- 3. Mixer Agent (LO Frequency + Attenuation) ---
+class MixerAgent(BaseAgent):
     """
-    IF Amplifier gain control agent.
+    Mixer / Local Oscillator control agent.
     
-    Outputs continuous gain/voltage value between 0 and max_gain_v.
-    Uses sigmoid activation for bounded positive output.
+    Outputs two values:
+    1. LO frequency in MHz
+    2. Attenuation in dB (0 to -26dB)
     
     Args:
         config: Agent configuration (optional).
         latent_dim: Override for latent dimension.
-        max_gain_v: Maximum gain voltage. Default: 3.3
+        min_freq_mhz: Minimum LO frequency. Default: 2405.0
+        max_freq_mhz: Maximum LO frequency. Default: 2483.0
+        min_atten_db: Minimum (most) attenuation. Default: -26.0
+        max_atten_db: Maximum (no) attenuation. Default: 0.0
     
     Input Shape:
         [batch, latent_dim]
     
     Output Shape:
-        [batch] - Gain values in Volts
+        Tuple of ([batch], [batch]) - (frequency_MHz, attenuation_dB)
     
     Example:
-        >>> if_amp = IFAmpAgent(latent_dim=64, max_gain_v=3.3)
+        >>> mixer = MixerAgent(latent_dim=64)
         >>> z = torch.randn(4, 64)
-        >>> gains = if_amp.get_action(z)  # Shape: [4]
+        >>> freq, atten = mixer.get_action(z)
     """
     
     def __init__(
         self,
         config: Optional[AgentConfig] = None,
         latent_dim: Optional[int] = None,
-        max_gain_v: float = 3.3,
+        min_freq_mhz: float = 2405.0,
+        max_freq_mhz: float = 2483.0,
+        min_atten_db: float = -26.0,
+        max_atten_db: float = 0.0,
+    ) -> None:
+        if config is None:
+            config = AgentConfig()
+        
+        if latent_dim is not None:
+            config.latent_dim = latent_dim
+        
+        config.output_dim = 2  # frequency + attenuation
+        super().__init__(config)
+        
+        self.min_freq = min_freq_mhz
+        self.max_freq = max_freq_mhz
+        self.min_atten = min_atten_db
+        self.max_atten = max_atten_db
+        
+        logger.info(
+            f"MixerAgent: freq_range={self.min_freq}-{self.max_freq}MHz, "
+            f"atten_range={self.min_atten} to {self.max_atten}dB"
+        )
+
+    def get_action(
+        self,
+        z: Tensor,
+        deterministic: bool = True,
+        as_tensor: bool = True,
+        noise_scale: float = 0.1,
+    ) -> Union[Tuple[Tensor, Tensor], Tuple[List[float], List[float]]]:
+        """
+        Get mixer LO frequency and attenuation from latent vector.
+        
+        Args:
+            z: Latent vector. Shape: [batch, latent_dim]
+            deterministic: If True, return direct output.
+                If False, add exploration noise.
+            as_tensor: If True, return tensors. If False, return lists.
+            noise_scale: Scale of exploration noise.
+        
+        Returns:
+            Tuple of (frequency_MHz, attenuation_dB).
+            Shape: ([batch], [batch]) if as_tensor=True.
+        """
+        raw_val = self.forward(z)  # Shape: [batch, 2]
+        
+        # Split into frequency and attenuation outputs
+        raw_freq = raw_val[:, 0]
+        raw_atten = raw_val[:, 1]
+        
+        # Sigmoid bounds outputs to [0, 1], then scale to respective ranges
+        norm_freq = torch.sigmoid(raw_freq)
+        norm_atten = torch.sigmoid(raw_atten)
+        
+        frequencies = self.min_freq + norm_freq * (self.max_freq - self.min_freq)
+        attenuations = self.min_atten + norm_atten * (self.max_atten - self.min_atten)
+        
+        if not deterministic:
+            freq_range = self.max_freq - self.min_freq
+            atten_range = self.max_atten - self.min_atten
+            
+            freq_noise = torch.randn_like(frequencies) * freq_range * noise_scale
+            atten_noise = torch.randn_like(attenuations) * atten_range * noise_scale
+            
+            frequencies = torch.clamp(frequencies + freq_noise, self.min_freq, self.max_freq)
+            attenuations = torch.clamp(attenuations + atten_noise, self.min_atten, self.max_atten)
+        
+        if as_tensor:
+            return frequencies, attenuations
+        else:
+            return (
+                [float(f.item()) for f in frequencies],
+                [float(a.item()) for a in attenuations],
+            )
+
+
+# --- 4. IF Amplifier Agent (Continuous Gain in dB) ---
+class IFAmpAgent(BaseAgent):
+    """
+    IF Amplifier gain control agent.
+    
+    Outputs continuous gain value in dB between min_gain_db and max_gain_db.
+    Uses sigmoid activation scaled to dB range.
+    
+    Args:
+        config: Agent configuration (optional).
+        latent_dim: Override for latent dimension.
+        min_gain_db: Minimum gain in dB. Default: -6.0
+        max_gain_db: Maximum gain in dB. Default: 26.0
+    
+    Input Shape:
+        [batch, latent_dim]
+    
+    Output Shape:
+        [batch] - Gain values in dB
+    
+    Example:
+        >>> if_amp = IFAmpAgent(latent_dim=64)
+        >>> z = torch.randn(4, 64)
+        >>> gains = if_amp.get_action(z)  # Shape: [4], values in dB
+    """
+    
+    def __init__(
+        self,
+        config: Optional[AgentConfig] = None,
+        latent_dim: Optional[int] = None,
+        min_gain_db: float = -6.0,
+        max_gain_db: float = 26.0,
     ) -> None:
         if config is None:
             config = AgentConfig()
@@ -470,9 +494,10 @@ class IFAmpAgent(BaseAgent):
         config.output_dim = 1
         super().__init__(config)
         
-        self.max_gain = max_gain_v
+        self.min_gain_db = min_gain_db
+        self.max_gain_db = max_gain_db
         
-        logger.info(f"IFAmpAgent: max_gain_v={self.max_gain}")
+        logger.info(f"IFAmpAgent: gain_range={self.min_gain_db} to {self.max_gain_db} dB")
 
     def get_action(
         self,
@@ -489,25 +514,24 @@ class IFAmpAgent(BaseAgent):
             deterministic: If True, return direct output.
                 If False, add exploration noise.
             as_tensor: If True, return tensor. If False, return list.
-            noise_scale: Scale of exploration noise (fraction of max_gain).
+            noise_scale: Scale of exploration noise.
         
         Returns:
-            Gain value(s) in mA.
+            Gain value(s) in dB.
             Shape: [batch] if as_tensor=True, else list of floats.
         """
         raw_val = self.forward(z)
         
-        # Sigmoid bounds output to [0, 1] (Gain is positive)
+        # Sigmoid bounds output to [0, 1], then scale to [min_gain_db, max_gain_db]
         norm_val = torch.sigmoid(raw_val)
-        
-        # Scale to max gain
-        gains = norm_val.squeeze(-1) * self.max_gain
+        gains_db = self.min_gain_db + norm_val.squeeze(-1) * (self.max_gain_db - self.min_gain_db)
         
         if not deterministic:
-            noise = torch.randn_like(gains) * self.max_gain * noise_scale
-            gains = torch.clamp(gains + noise, 0.0, self.max_gain)
+            gain_range = self.max_gain_db - self.min_gain_db
+            noise = torch.randn_like(gains_db) * gain_range * noise_scale
+            gains_db = torch.clamp(gains_db + noise, self.min_gain_db, self.max_gain_db)
         
         if as_tensor:
-            return gains
+            return gains_db
         else:
-            return [float(g.item()) for g in gains]
+            return [float(g.item()) for g in gains_db]
