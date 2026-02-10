@@ -18,7 +18,7 @@ from ai_framework.config import DSPConfig, get_logger
 
 logger = get_logger(__name__)
 
-
+# IMPORTANT: NEED TO CONFIRM THAT SPECTROGRAM CALCULATION FOR DATASET CREATION MATCHES EXACTLY TO THIS.
 def compute_spectrogram(
     iq_data: Tensor,
     config: Optional[DSPConfig] = None,
@@ -109,6 +109,7 @@ def compute_spectrogram(
     return output
 
 
+# IMPORTANT: NEED TO CONFIRM THAT EVM CALCULATION FOR DATASET CREATION MATCHES EXACTLY TO THIS.
 def calculate_evm(
     iq_data: Tensor,
     reference_data: Optional[Tensor] = None,

@@ -60,6 +60,7 @@ class VisualBranch(nn.Module):
             kernel_size=3,
             padding=1,
         )
+        self.bn1 = nn.BatchNorm2d(conv_channels[0])
         self.pool = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(
             in_channels=conv_channels[0],
@@ -67,6 +68,7 @@ class VisualBranch(nn.Module):
             kernel_size=3,
             padding=1,
         )
+        self.bn2 = nn.BatchNorm2d(conv_channels[1])
         self.global_pool = nn.AdaptiveAvgPool2d(adaptive_pool_size)
         
         fc_input_dim = conv_channels[1] * adaptive_pool_size[0] * adaptive_pool_size[1]
@@ -103,8 +105,8 @@ class VisualBranch(nn.Module):
                 f"Expected 2 channels (Real/Imag), got {spectrogram.size(1)}"
             )
         
-        x = self.pool(F.relu(self.conv1(spectrogram)))
-        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.bn1(self.conv1(spectrogram))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
         x = self.global_pool(x)
         x = torch.flatten(x, 1)
         return F.relu(self.fc(x))
@@ -147,11 +149,13 @@ class ParametricBranch(nn.Module):
         for hidden_dim in hidden_dims:
             layers.extend([
                 nn.Linear(prev_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
                 nn.ReLU(),
             ])
             prev_dim = hidden_dim
         layers.extend([
             nn.Linear(prev_dim, output_dim),
+            nn.LayerNorm(output_dim),
             nn.ReLU(),
         ])
         

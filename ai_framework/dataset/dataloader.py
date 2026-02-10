@@ -13,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader, Subset, random_split
 
 from ai_framework.config import get_logger
-from ai_framework.dataset.dataset import RFControlDataset, collate_fn
+from ai_framework.dataset.dataset import RFControlDataset, DataNormalizer, collate_fn
 
 logger = get_logger(__name__)
 
@@ -29,6 +29,9 @@ def create_dataloaders(
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create training and validation DataLoaders with random splitting.
+    
+    Normalization statistics are computed from the TRAINING split only
+    to prevent data leakage into validation. Normalization is always enabled.
     
     Args:
         csv_path: Path to the CSV file with dataset metadata.
@@ -49,26 +52,37 @@ def create_dataloaders(
         ...     val_split=0.2
         ... )
     """
-    # Create full dataset
-    full_dataset = RFControlDataset(
-        csv_path=csv_path,
-        data_root=data_root,
-    )
+    import pandas as pd
     
-    # Calculate split sizes
-    total_size = len(full_dataset)
+    # Load CSV to compute split indices
+    df = pd.read_csv(csv_path)
+    total_size = len(df)
     val_size = int(total_size * val_split)
     train_size = total_size - val_size
     
     logger.info(f"Dataset split: {train_size} train, {val_size} validation")
     
-    # Reproducible random split
+    # Generate train/val indices
     generator = torch.Generator().manual_seed(seed)
-    train_dataset, val_dataset = random_split(
-        full_dataset, 
-        [train_size, val_size],
-        generator=generator
+    indices = torch.randperm(total_size, generator=generator).tolist()
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:]
+    
+    # Compute normalization statistics from TRAINING data only (prevents data leakage)
+    train_df = df.iloc[train_indices]
+    normalizer = DataNormalizer(train_df)
+    logger.info("Computed normalization statistics from training split only")
+    
+    # Create datasets with shared normalizer
+    full_dataset = RFControlDataset(
+        csv_path=csv_path,
+        data_root=data_root,
+        normalizer=normalizer,
     )
+    
+    # Create subsets
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices)
     
     # Create DataLoaders
     train_loader = DataLoader(
@@ -99,6 +113,7 @@ def create_inference_dataloader(
     data_root: Optional[Union[str, Path]] = None,
     batch_size: int = 1,
     num_workers: int = 0,
+    normalizer: Optional[DataNormalizer] = None,
 ) -> DataLoader:
     """
     Create a DataLoader for inference (no shuffling, no splitting).
@@ -108,13 +123,20 @@ def create_inference_dataloader(
         data_root: Root directory for STFT data files.
         batch_size: Batch size.
         num_workers: Number of worker processes.
+        normalizer: Pre-computed normalizer from training. Required for 
+            consistent normalization at inference time.
     
     Returns:
         DataLoader for inference.
+        
+    Note:
+        The normalizer should be loaded from training checkpoints to ensure
+        inference uses the same normalization statistics as training.
     """
     dataset = RFControlDataset(
         csv_path=csv_path,
         data_root=data_root,
+        normalizer=normalizer,
     )
     
     loader = DataLoader(

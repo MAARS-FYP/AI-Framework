@@ -12,7 +12,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.optim as optim
@@ -31,6 +31,7 @@ from ai_framework.core.engine import (
     train_one_epoch,
 )
 from ai_framework.dataset.dataloader import create_dataloaders, get_dataset_stats
+from ai_framework.dataset.dataset import DataNormalizer
 from ai_framework.models.agents import FilterAgent, IFAmpAgent, LNAAgent, MixerAgent
 from ai_framework.models.backbone import UnifiedBackbone
 
@@ -99,8 +100,9 @@ def save_checkpoint(
     train_metrics: TrainingMetrics,
     val_metrics: TrainingMetrics,
     config: TrainingConfig,
+    normalizer: DataNormalizer,
 ) -> None:
-    """Save training checkpoint."""
+    """Save training checkpoint with normalizer for inference deployment."""
     checkpoint = {
         'epoch': epoch,
         'backbone_state_dict': backbone.state_dict(),
@@ -113,6 +115,7 @@ def save_checkpoint(
         'train_metrics': train_metrics.to_dict(),
         'val_metrics': val_metrics.to_dict(),
         'config': asdict(config),
+        'normalizer': normalizer.to_dict(),  # Critical for inference!
     }
     torch.save(checkpoint, path)
     logger.info(f"Checkpoint saved: {path}")
@@ -127,8 +130,8 @@ def load_checkpoint(
     if_amp_agent: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[object] = None,
-) -> int:
-    """Load training checkpoint. Returns the epoch number."""
+) -> Tuple[int, Optional[DataNormalizer]]:
+    """Load training checkpoint. Returns (epoch_number, normalizer)."""
     checkpoint = torch.load(path, map_location='cpu')
     
     backbone.load_state_dict(checkpoint['backbone_state_dict'])
@@ -143,8 +146,14 @@ def load_checkpoint(
     if scheduler and checkpoint.get('scheduler_state_dict'):
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     
+    # Load normalizer if available
+    normalizer = None
+    if 'normalizer' in checkpoint:
+        normalizer = DataNormalizer.from_dict(checkpoint['normalizer'])
+        logger.info("Normalizer loaded from checkpoint")
+    
     logger.info(f"Checkpoint loaded: {path}, epoch {checkpoint['epoch']}")
-    return checkpoint['epoch']
+    return checkpoint['epoch'], normalizer
 
 
 def save_models(
@@ -154,8 +163,9 @@ def save_models(
     mixer_agent: torch.nn.Module,
     filter_agent: torch.nn.Module,
     if_amp_agent: torch.nn.Module,
+    normalizer: DataNormalizer,
 ) -> None:
-    """Save final trained models separately."""
+    """Save final trained models with normalizer for deployment."""
     output_dir.mkdir(parents=True, exist_ok=True)
     
     torch.save(backbone.state_dict(), output_dir / "backbone.pt")
@@ -164,7 +174,10 @@ def save_models(
     torch.save(filter_agent.state_dict(), output_dir / "filter_agent.pt")
     torch.save(if_amp_agent.state_dict(), output_dir / "if_amp_agent.pt")
     
-    logger.info(f"Models saved to {output_dir}")
+    # Save normalizer separately for easy loading during inference
+    torch.save(normalizer.to_dict(), output_dir / "normalizer.pt")
+    
+    logger.info(f"Models and normalizer saved to {output_dir}")
 
 
 def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
@@ -202,6 +215,11 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
         val_split=config.val_split,
     )
     logger.info(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+    
+    # Extract normalizer from dataset for saving with model
+    # The normalizer is critical for inference deployment
+    normalizer = train_loader.dataset.dataset.normalizer
+    logger.info("Normalizer extracted from training dataset")
     
     # --- Models ---
     logger.info("Initializing models...")
@@ -294,11 +312,15 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
     best_val_loss = float('inf')
     
     if resume_from:
-        start_epoch = load_checkpoint(
+        epoch_num, loaded_normalizer = load_checkpoint(
             Path(resume_from),
             backbone, lna_agent, mixer_agent, filter_agent, if_amp_agent,
             optimizer, scheduler
-        ) + 1
+        )
+        start_epoch = epoch_num + 1
+        if loaded_normalizer:
+            normalizer = loaded_normalizer
+            logger.info("Using normalizer from checkpoint")
         logger.info(f"Resuming from epoch {start_epoch}")
     
     # --- Training Loop ---
@@ -342,7 +364,7 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
             save_checkpoint(
                 checkpoint_dir / "best_checkpoint.pt",
                 epoch, backbone, lna_agent, mixer_agent, filter_agent, if_amp_agent,
-                optimizer, scheduler, train_metrics, val_metrics, config
+                optimizer, scheduler, train_metrics, val_metrics, config, normalizer
             )
             logger.info(f"New best model saved! Val loss: {best_val_loss:.4f}")
         
@@ -351,7 +373,7 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
             save_checkpoint(
                 checkpoint_dir / f"checkpoint_epoch_{epoch+1}.pt",
                 epoch, backbone, lna_agent, mixer_agent, filter_agent, if_amp_agent,
-                optimizer, scheduler, train_metrics, val_metrics, config
+                optimizer, scheduler, train_metrics, val_metrics, config, normalizer
             )
     
     # --- Save final models ---
@@ -360,7 +382,7 @@ def train(config: TrainingConfig, resume_from: Optional[str] = None) -> None:
     final_model_dir = checkpoint_dir / "final_models"
     save_models(
         final_model_dir,
-        backbone, lna_agent, mixer_agent, filter_agent, if_amp_agent
+        backbone, lna_agent, mixer_agent, filter_agent, if_amp_agent, normalizer
     )
     
     # Save training history
