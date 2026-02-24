@@ -61,9 +61,15 @@ class RFDataset(Dataset):
             (imag - imag.mean()) / (imag.std() + 1e-8),
         ], axis=0).astype(np.float32)
 
+        # Also keep the raw complex STFT for symbolic processing
+        stft_complex_tensor = torch.view_as_real(
+            torch.from_numpy(stft.astype(np.complex64))
+        )  # [freq, time, 2] real view
+
         inputs = (
             torch.from_numpy(spec),
             torch.from_numpy(self.metrics[idx]),
+            stft_complex_tensor,
         )
         targets = {
             "lna": torch.tensor(self.lna_targets[idx], dtype=torch.long),
@@ -78,8 +84,9 @@ def collate_fn(batch):
     """Stack samples into batches."""
     specs = torch.stack([b[0][0] for b in batch])
     metrics = torch.stack([b[0][1] for b in batch])
+    stft_raw = torch.stack([b[0][2] for b in batch])  # [B, freq, time, 2]
     targets = {k: torch.stack([b[1][k] for b in batch]) for k in batch[0][1]}
-    return (specs, metrics), targets
+    return (specs, metrics, stft_raw), targets
 
 
 def create_dataloaders(csv_path, data_root=None, batch_size=8, val_split=0.2, seed=42):

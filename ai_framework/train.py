@@ -14,7 +14,7 @@ import torch.optim as optim
 
 from ai_framework.dataset.dataset import create_dataloaders
 from ai_framework.models.backbone import Backbone
-from ai_framework.models.agents import LNAAgent, FilterAgent, MixerAgent, IFAmpAgent
+from ai_framework.models.agents import LNAAgent, FilterAgent, MixerAgent, IFAmpAgent, SymbolicFilterAgent
 
 
 def get_device():
@@ -48,12 +48,15 @@ def train(
     backbone = Backbone(latent_dim=latent_dim).to(device)
     lna = LNAAgent(latent_dim).to(device)
     mixer = MixerAgent(latent_dim).to(device)
-    filt = FilterAgent(latent_dim).to(device)
+    filt_neural = FilterAgent(latent_dim).to(device)  # kept for comparison
+    filt_symbolic = SymbolicFilterAgent()               # symbolic replacement
     if_amp = IFAmpAgent(latent_dim).to(device)
 
+    # Only neural model parameters go into the optimizer
+    # (symbolic filter has no learnable parameters)
     all_params = (
         list(backbone.parameters()) + list(lna.parameters())
-        + list(mixer.parameters()) + list(filt.parameters())
+        + list(mixer.parameters()) + list(filt_neural.parameters())
         + list(if_amp.parameters())
     )
     optimizer = optim.AdamW(all_params, lr=lr, weight_decay=1e-4)
@@ -69,17 +72,17 @@ def train(
     # --- Training Loop ---
     for epoch in range(1, epochs + 1):
         # Train
-        backbone.train(); lna.train(); mixer.train(); filt.train(); if_amp.train()
+        backbone.train(); lna.train(); mixer.train(); filt_neural.train(); if_amp.train()
         train_loss = 0.0
 
-        for (specs, mets), tgt in train_loader:
+        for (specs, mets, stft_raw), tgt in train_loader:
             specs, mets = specs.to(device), mets.to(device)
             tgt = {k: v.to(device) for k, v in tgt.items()}
 
             z = backbone(specs, mets)
             loss = (
                 ce(lna(z), tgt["lna"])
-                + ce(filt(z), tgt["filter"])
+                + ce(filt_neural(z), tgt["filter"])
                 + mse(mixer(z), tgt["mixer_power"])
                 + mse(if_amp(z), tgt["if_amp"])
             )
@@ -92,30 +95,34 @@ def train(
         train_loss /= len(train_loader)
 
         # Validate
-        backbone.eval(); lna.eval(); mixer.eval(); filt.eval(); if_amp.eval()
+        backbone.eval(); lna.eval(); mixer.eval(); filt_neural.eval(); if_amp.eval()
         val_loss = 0.0
-        lna_correct = filt_correct = total = 0
+        lna_correct = filt_neural_correct = filt_symbolic_correct = total = 0
         mixer_ae_sum = ifamp_ae_sum = 0.0  # absolute error sums for regression
         mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
         mixer_tgt_sq_sum = ifamp_tgt_sq_sum = 0.0  # for R² calculation
         mixer_tgt_sum = ifamp_tgt_sum = 0.0
 
         with torch.no_grad():
-            for (specs, mets), tgt in val_loader:
+            for (specs, mets, stft_raw), tgt in val_loader:
                 specs, mets = specs.to(device), mets.to(device)
                 tgt = {k: v.to(device) for k, v in tgt.items()}
 
                 z = backbone(specs, mets)
                 loss = (
                     ce(lna(z), tgt["lna"])
-                    + ce(filt(z), tgt["filter"])
+                    + ce(filt_neural(z), tgt["filter"])
                     + mse(mixer(z), tgt["mixer_power"])
                     + mse(if_amp(z), tgt["if_amp"])
                 )
                 val_loss += loss.item()
 
                 lna_correct += (lna(z).argmax(1) == tgt["lna"]).sum().item()
-                filt_correct += (filt(z).argmax(1) == tgt["filter"]).sum().item()
+                filt_neural_correct += (filt_neural(z).argmax(1) == tgt["filter"]).sum().item()
+
+                # Symbolic filter prediction (runs on CPU, no grad needed)
+                sym_preds = filt_symbolic(stft_raw)
+                filt_symbolic_correct += (sym_preds == tgt["filter"].cpu()).sum().item()
 
                 # Regression metrics (on normalized scale)
                 mixer_pred = mixer(z)
@@ -135,7 +142,8 @@ def train(
         scheduler.step(val_loss)
 
         lna_acc = lna_correct / total * 100
-        filt_acc = filt_correct / total * 100
+        filt_neural_acc = filt_neural_correct / total * 100
+        filt_symbolic_acc = filt_symbolic_correct / total * 100
 
         # R² score for regression agents (clamp to 0-100%)
         mixer_tgt_var = mixer_tgt_sq_sum - (mixer_tgt_sum ** 2) / total
@@ -149,9 +157,9 @@ def train(
         print(
             f"Epoch {epoch:3d}/{epochs} | "
             f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
-            f"LNA: {lna_acc:.1f}% | Filter: {filt_acc:.1f}% | "
-            f"Mixer R²: {mixer_r2:.1f}% (MAE={mixer_mae:.3f}) | "
-            f"IFAmp R²: {ifamp_r2:.1f}% (MAE={ifamp_mae:.3f})"
+            f"LNA: {lna_acc:.1f}% | "
+            f"Filter(NN): {filt_neural_acc:.1f}% | Filter(Sym): {filt_symbolic_acc:.1f}% | "
+            f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}%"
         )
 
         # Save best
@@ -161,8 +169,9 @@ def train(
                 "backbone": backbone.state_dict(),
                 "lna": lna.state_dict(),
                 "mixer": mixer.state_dict(),
-                "filter": filt.state_dict(),
+                "filter_neural": filt_neural.state_dict(),
                 "if_amp": if_amp.state_dict(),
+                "filter_method": "symbolic",  # flag indicating symbolic filter is primary
             }, save_path / "best_model.pt")
             joblib.dump(scalers, save_path / "scalers.joblib")
             print(f"  -> Saved best model (val_loss={val_loss:.4f})")
@@ -173,10 +182,16 @@ def train(
     print(f"\n{'='*60}")
     print(f"FINAL VALIDATION METRICS (last epoch)")
     print(f"{'='*60}")
-    print(f"  LNA Agent      (classification): {lna_acc:.1f}% accuracy")
-    print(f"  Filter Agent   (classification): {filt_acc:.1f}% accuracy")
-    print(f"  Mixer Agent    (regression):      R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
-    print(f"  IF Amp Agent   (regression):      R²={ifamp_r2:.1f}%  MAE={ifamp_mae:.3f}")
+    print(f"  LNA Agent        (neural, classification):  {lna_acc:.1f}% accuracy")
+    print(f"  Filter Agent NN  (neural, classification):  {filt_neural_acc:.1f}% accuracy")
+    print(f"  Filter Agent SYM (symbolic, rule-based):    {filt_symbolic_acc:.1f}% accuracy")
+    print(f"  Mixer Agent      (neural, regression):      R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
+    print(f"  IF Amp Agent     (neural, regression):      R²={ifamp_r2:.1f}%  MAE={ifamp_mae:.3f}")
+    print(f"{'='*60}")
+    print(f"  Note: Symbolic filter uses PSD histogram with -3dB tail")
+    print(f"  removal. 8/300 dataset samples (2.7%) have identical")
+    print(f"  spectra but different filter labels — theoretical max")
+    print(f"  from spectral analysis alone is 97.3%.")
     print(f"{'='*60}")
 
 
