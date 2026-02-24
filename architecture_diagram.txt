@@ -27,16 +27,28 @@
                   │                  └──────────────────┬──────────────────┘
                   │                                     │
                   ▼                                     ▼
+        ┌────────────────────────────────────────────────────────────────────┐
+        │                    PREPROCESSING & NORMALIZATION                   │
+        │  ┌──────────────────────────────┐  ┌──────────────────────────┐   │
+        │  │  Spectrogram (per-sample)    │  │  Metrics & Targets       │   │
+        │  │  • Real: Z-score norm        │  │  • sklearn.StandardScaler│   │
+        │  │  • Imag: Z-score norm        │  │  • Fit on train split    │   │
+        │  │  • Independent per channel   │  │  • Applied to all splits │   │
+        │  └──────────────────────────────┘  └──────────────────────────┘   │
+        └────────────────────────────────────────────────────────────────────┘
+                  │                                     │
+                  ▼                                     ▼
 ┌───────────────────────────────────────────┐   ┌───────────────────────────────────────────┐
 │           SPECTROGRAM INPUT               │   │          SENSOR METRICS                   │
 │  ┌─────────────────────────────────────┐  │   │  ┌─────────────────────────────────────┐  │
-│  │  Shape: [B, 2, 1024, 8]             │  │   │  │  Shape: [B, 3]                      │  │
+│  │  Shape: [B, 2, 1024, 5]             │  │   │  │  Shape: [B, 3]                      │  │
 │  │  ├── Channel 0: Real(STFT)          │  │   │  │  ├── Best_EVM_dB (from I/Q)         │  │
 │  │  └── Channel 1: Imag(STFT)          │  │   │  │  ├── Power_Post_LNA_dBm (from MCU)  │  │
 │  │                                     │  │   │  │  └── Power_Post_PA_dBm  (from MCU)  │  │
-│  │  Freq bins: 1024, Time frames: 8    │  │   │  └─────────────────────────────────────┘  │
-│  └─────────────────────────────────────┘  │   └───────────────────────────────────────────┘
-└─────────────────────┬─────────────────────┘                       │
+│  │  Freq bins: 1024, Time frames: 5    │  │   │  │                                     │  │
+│  │  Per-sample Z-score normalized      │  │   │  │  StandardScaler normalized          │  │
+│  └─────────────────────────────────────┘  │   │  └─────────────────────────────────────┘  │
+└─────────────────────┬─────────────────────┘   └───────────────────┬───────────────────────┘
                       │                                             │
                       ▼                                             ▼
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -46,21 +58,19 @@
 ║  ┌─────────────────────────────────────────┐       ┌─────────────────────────────────────────────┐   ║
 ║  │         VISUAL BRANCH (CNN)             │       │           PARAMETRIC BRANCH (MLP)           │   ║
 ║  │  ┌───────────────────────────────────┐  │       │  ┌───────────────────────────────────────┐  │   ║
-║  │  │  Conv2d(2→32, 3×3) + BN + ReLU    │  │       │  │  Linear(3 → 32) + LayerNorm + ReLU    │  │   ║
+║  │  │  Conv2d(2→16, 3×3) + BN + ReLU    │  │       │  │  Linear(3 → 16) + LayerNorm + ReLU    │  │   ║
 ║  │  │           ↓                       │  │       │  │               ↓                       │  │   ║
-║  │  │  MaxPool2d(2×2)                   │  │       │  │  Linear(32 → 64) + LayerNorm + ReLU   │  │   ║
+║  │  │  MaxPool2d(2×2)                   │  │       │  │  Linear(16 → 32) + LayerNorm + ReLU   │  │   ║
 ║  │  │           ↓                       │  │       │  │               ↓                       │  │   ║
-║  │  │  Conv2d(32→64, 3×3) + BN + ReLU   │  │       │  │  Linear(64 → 64) + LayerNorm          │  │   ║
-║  │  │           ↓                       │  │       │  │               ↓                       │  │   ║
-║  │  │  MaxPool2d(2×2)                   │  │       │  │  Output: [B, 64]                      │  │   ║
+║  │  │  Conv2d(16→32, 3×3) + BN + ReLU   │  │       │  │  Output: [B, 32]                      │  │   ║
 ║  │  │           ↓                       │  │       │  └───────────────────────────────────────┘  │   ║
-║  │  │  Conv2d(64→128, 3×3) + BN + ReLU  │  │       └─────────────────────┬───────────────────────┘   ║
+║  │  │  MaxPool2d(2×2)                   │  │       └─────────────────────┬───────────────────────┘   ║
 ║  │  │           ↓                       │  │                             │                           ║
-║  │  │  AdaptiveAvgPool2d(1×1)           │  │                             │                           ║
+║  │  │  AdaptiveAvgPool2d(4×1)           │  │                             │                           ║
 ║  │  │           ↓                       │  │                             │                           ║
-║  │  │  Flatten → Linear(128 → 64)       │  │                             │                           ║
+║  │  │  Flatten → Linear(128 → 32)       │  │                             │                           ║
 ║  │  │           ↓                       │  │                             │                           ║
-║  │  │  Output: [B, 64]                  │  │                             │                           ║
+║  │  │  Output: [B, 32]                  │  │                             │                           ║
 ║  │  └───────────────────────────────────┘  │                             │                           ║
 ║  └─────────────────────┬───────────────────┘                             │                           ║
 ║                        │                                                 │                           ║
@@ -69,15 +79,13 @@
 ║                                               ▼                                                      ║
 ║                               ┌───────────────────────────────┐                                      ║
 ║                               │      FUSION (Concatenate)     │                                      ║
-║                               │   [B, 64] + [B, 64] = [B, 128]│                                      ║
+║                               │   [B, 32] + [B, 32] = [B, 64] │                                      ║
 ║                               └───────────────┬───────────────┘                                      ║
 ║                                               │                                                      ║
 ║                                               ▼                                                      ║
 ║                               ┌───────────────────────────────┐                                      ║
-║                               │       FUSION MLP              │                                      ║
-║                               │  Linear(128 → 64) + ReLU      │                                      ║
-║                               │           ↓                   │                                      ║
-║                               │  Linear(64 → 64)              │                                      ║
+║                               │       FUSION LAYER            │                                      ║
+║                               │  Linear(64→64) + LN + Tanh    │                                      ║
 ║                               └───────────────┬───────────────┘                                      ║
 ║                                               │                                                      ║
 ║                                               ▼                                                      ║
@@ -95,33 +103,31 @@
                ▼                   ▼                       ▼                   ▼
 ╔═══════════════════════╗ ╔═══════════════════════╗ ╔═══════════════════════╗ ╔═══════════════════════╗
 ║      LNA AGENT        ║ ║     MIXER AGENT       ║ ║     FILTER AGENT      ║ ║    IF AMP AGENT       ║
-║  (Classification)     ║ ║   (Dual Regression)   ║ ║   (Classification)    ║ ║    (Regression)       ║
+║  (Classification)     ║ ║     (Regression)      ║ ║   (Classification)    ║ ║    (Regression)       ║
 ╠═══════════════════════╣ ╠═══════════════════════╣ ╠═══════════════════════╣ ╠═══════════════════════╣
 ║                       ║ ║                       ║ ║                       ║ ║                       ║
 ║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║
 ║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║
 ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║
-║ │Linear(32→16)+ReLU │ ║ ║ │Linear(32→16)+ReLU │ ║ ║ │Linear(32→16)+ReLU │ ║ ║ │Linear(32→16)+ReLU │ ║
+║ │Linear(32→2)       │ ║ ║ │Linear(32→1)       │ ║ ║ │Linear(32→3)       │ ║ ║ │Linear(32→1)       │ ║
 ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║
-║ │Linear(16→2)       │ ║ ║ │Linear(16→2)       │ ║ ║ │Linear(16→3)       │ ║ ║ │Linear(16→1)       │ ║
-║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║
-║ │Softmax (infer)    │ ║ ║ │Sigmoid → Scale    │ ║ ║ │Softmax (infer)    │ ║ ║ │Sigmoid → Scale    │ ║
+║ │CE Loss (logits)   │ ║ ║ │MSE Loss (scaled)  │ ║ ║ │CE Loss (logits)   │ ║ ║ │MSE Loss (scaled)  │ ║
 ║ └───────────────────┘ ║ ║ └───────────────────┘ ║ ║ └───────────────────┘ ║ ║ └───────────────────┘ ║
 ║                       ║ ║                       ║ ║                       ║ ║                       ║
-║ Voltage Classes:      ║ ║ LO Frequency:         ║ ║ Filter Classes:       ║ ║ Gain Range:           ║
-║ ├── Class 0: 3.0 V    ║ ║ 2405-2483 MHz         ║ ║ ├── Class 0: 1 MHz    ║ ║ ├── Min: -6 dB        ║
-║ └── Class 1: 5.0 V    ║ ║                       ║ ║ ├── Class 1: 10 MHz   ║ ║ └── Max: +26 dB       ║
-║                       ║ ║ Attenuation:          ║ ║ └── Class 2: 20 MHz   ║ ║                       ║
-║ Output: argmax        ║ ║ 0 dB to -26 dB        ║ ║                       ║ ║ Output:               ║
-║ → voltage lookup      ║ ║                       ║ ║ Output: argmax        ║ ║ -6 + σ(x) × 32 dB     ║
+║ Voltage Classes:      ║ ║ LO Power:             ║ ║ Filter Classes:       ║ ║ Gain Range:           ║
+║ ├── Class 0: 3.0 V    ║ ║ Optimal_LO_Power_dBm  ║ ║ ├── Class 0: 1 MHz    ║ ║ Optimal_IF_Gain_dB    ║
+║ └── Class 1: 5.0 V    ║ ║ (StandardScaler'd)    ║ ║ ├── Class 1: 10 MHz   ║ ║ (StandardScaler'd)    ║
+║                       ║ ║                       ║ ║ └── Class 2: 20 MHz   ║ ║                       ║
+║ Output: argmax        ║ ║ Output: continuous    ║ ║ Output: argmax        ║ ║ Output: continuous    ║
+║ → voltage lookup      ║ ║ → inverse_transform   ║ ║ → bandwidth lookup    ║ ║ → inverse_transform   ║
 ╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝
             │                         │                         │                         │
             ▼                         ▼                         ▼                         ▼
 ┌───────────────────────┐ ┌─────────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
-│   LNA VOLTAGE (V)     │ │    MIXER OUTPUTS        │ │   FILTER BANDWIDTH    │ │   IF AMP GAIN (dB)    │
+│   LNA VOLTAGE (V)     │ │   MIXER LO POWER (dBm)  │ │   FILTER BANDWIDTH    │ │   IF AMP GAIN (dB)    │
 │ ┌───────────────────┐ │ │ ┌─────────────────────┐ │ │ ┌───────────────────┐ │ │ ┌───────────────────┐ │
-│ │Values: 3.0V / 5.0V│ │ │ │LO: 2405-2483 MHz    │ │ │ │ 1 / 10 / 20 MHz   │ │ │ │Range: -6 to +26dB │ │
-│ │Binary (2 classes) │ │ │ │Atten: 0 to -26 dB   │ │ │ │ Discrete          │ │ │ │Continuous         │ │
+│ │Values: 3.0V / 5.0V│ │ │ │Optimal_LO_Power_dBm │ │ │ │ 1 / 10 / 20 MHz   │ │ │ │Optimal_IF_Gain_dB │ │
+│ │Binary (2 classes) │ │ │ │Continuous (regress) │ │ │ │ Discrete          │ │ │ │Continuous         │ │
 │ └───────────────────┘ │ │ └─────────────────────┘ │ │ └───────────────────┘ │ │ └───────────────────┘ │
 └───────────┬───────────┘ └────────────┬────────────┘ └───────────┬───────────┘ └───────────┬───────────┘
             │                          │                          │                         │
@@ -135,10 +141,9 @@
                           ║   ┌──────────────────────────────────┐ ║
                           ║   │  Example Output (per sample):    │ ║
                           ║   │  ├── LNA Voltage:   5.0 V        │ ║
-                          ║   │  ├── LO Frequency:  2440 MHz     │ ║
-                          ║   │  ├── LO Attenuation: -12 dB      │ ║
+                          ║   │  ├── Mixer LO Power: -15 dBm     │ ║
                           ║   │  ├── Filter:        10 MHz       │ ║
-                          ║   │  └── IF Amp Gain:   +15 dB       │ ║
+                          ║   │  └── IF Amp Gain:   +18 dB       │ ║
                           ║   └──────────────────────────────────┘ ║
                           ║                                        ║
                           ╚════════════════════════════════════════╝
@@ -160,11 +165,11 @@
   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
   │   CSV Dataset   │────▶│   DataLoader    │────▶│   Training      │
   │                 │     │                 │     │   Loop          │
-  │ • STFT files    │     │ • Batch: 4      │     │                 │
+  │ • STFT files    │     │ • Batch: 8      │     │                 │
   │ • Metrics       │     │ • Shuffle       │     │ • Forward pass  │
   │ • Labels        │     │ • Val split: 20%│     │ • Compute loss  │
-  └─────────────────┘     └─────────────────┘     │ • Backprop      │
-                                                  │ • Update params │
+  │ • StandardScale │     │                 │     │ • Backprop      │
+  └─────────────────┘     └─────────────────┘     │ • Update params │
                                                   └────────┬────────┘
                                                            │
                           ┌────────────────────────────────┘
@@ -173,12 +178,12 @@
           │                      LOSS FUNCTIONS                                 │
           ├─────────────────────────────────────────────────────────────────────┤
           │                                                                     │
-          │   Total Loss = w_lna × L_lna + w_mixer × L_mixer                    │
-          │                + w_filter × L_filter + w_if × L_if                  │
+          │   Total Loss = L_lna + L_mixer + L_filter + L_if                    │
+          │                (equal weights, simple sum)                          │
           │                                                                     │
           │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐.  │ 
-          │   │ LNA (CE)    │ │Mixer (MSE)  │ │Filter (CE)  │ │ IF (MSE)    │.  │
-          │   │ cross-ent   │ │ freq+atten  │ │ cross-ent   │ │ normalized  │.  │
+          │   │ LNA (CE)    │ │Mixer (MSE)  │ │Filter (CE)  │ │ IF Amp (MSE)│.  │
+          │   │ cross-ent   │ │ LO power    │ │ cross-ent   │ │ IF gain     │.  │
           │   └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘.  │
           └─────────────────────────────────────────────────────────────────────┘
 
@@ -193,12 +198,12 @@
   │  LNA Agent   │ Classification │  Supply Voltage (V)  │  3.0V or 5.0V      │  Cross-Entropy      │
   │              │  (binary)      │                      │  2 classes         │                     │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │ Mixer Agent  │  Regression    │  1. LO Freq (MHz)    │  2405 - 2483 MHz   │  MSE (normalized)   │
-  │              │  (dual output) │  2. Attenuation (dB) │  0 dB to -26 dB    │                     │
+  │ Mixer Agent  │  Regression    │  LO Power (dBm)      │  Optimal_LO_Power  │  MSE (normalized)   │
+  │              │  (continuous)  │                      │  StandardScaler'd  │                     │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
   │ Filter Agent │ Classification │  Filter Class Index  │  {0, 1, 2}         │  Cross-Entropy      │
   │              │  (discrete)    │  → 1/10/20 MHz       │  3 classes         │                     │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │ IF Amp Agent │  Regression    │  Gain (dB)           │  -6 dB to +26 dB   │  MSE (normalized)   │
-  │              │  (continuous)  │                      │  32 dB range       │                     │
+  │ IF Amp Agent │  Regression    │  Gain (dB)           │  Optimal_IF_Gain   │  MSE (normalized)   │
+  │              │  (continuous)  │                      │  StandardScaler'd  │                     │
   └──────────────┴────────────────┴──────────────────────┴────────────────────┴─────────────────────┘
