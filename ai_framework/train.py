@@ -97,6 +97,7 @@ def train(
         mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
         mixer_tgt_sq_sum = ifamp_tgt_sq_sum = 0.0  # for R² calculation
         mixer_tgt_sum = ifamp_tgt_sum = 0.0
+        center_freq_counts = [0, 0, 0]  # distribution of predicted centre freqs
 
         with torch.no_grad():
             for (specs, mets, stft_raw), tgt in val_loader:
@@ -116,6 +117,11 @@ def train(
                 # Symbolic filter prediction (runs on CPU, no grad needed)
                 filt_preds = filt(stft_raw)
                 filt_correct += (filt_preds == tgt["filter"].cpu()).sum().item()
+
+                # Symbolic centre-frequency classification
+                cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
+                for c in cf_preds.tolist():
+                    center_freq_counts[c] += 1
 
                 # Regression metrics (on normalized scale)
                 mixer_pred = mixer(z)
@@ -150,7 +156,8 @@ def train(
             f"Epoch {epoch:3d}/{epochs} | "
             f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
             f"LNA: {lna_acc:.1f}% | Filter: {filt_acc:.1f}% | "
-            f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}%"
+            f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}% | "
+            f"CtrFreq: {center_freq_counts}"
         )
 
         # Save best
@@ -173,7 +180,11 @@ def train(
     print(f"{'='*60}")
     print(f"  LNA Agent     (neural, classification):  {lna_acc:.1f}% accuracy")
     print(f"  Filter Agent  (symbolic, rule-based):    {filt_acc:.1f}% accuracy")
-    print(f"  Mixer Agent   (neural, regression):      R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
+    print(f"  Mixer Agent   (neural, LO power):        R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
+    print(f"  Mixer Agent   (symbolic, centre freq):   "
+          f"2405={center_freq_counts[0]}, "
+          f"2420={center_freq_counts[1]}, "
+          f"2435={center_freq_counts[2]} MHz")
     print(f"  IF Amp Agent  (neural, regression):      R²={ifamp_r2:.1f}%  MAE={ifamp_mae:.3f}")
     print(f"{'='*60}")
 

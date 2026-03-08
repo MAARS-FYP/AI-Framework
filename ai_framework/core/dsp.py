@@ -630,6 +630,102 @@ def symbolic_filter_classify(
         return 2  # 20 MHz filter
 
 
+def symbolic_center_freq_classify(
+    stft_complex: Union[Tensor, "np.ndarray"],
+    filter_class: int,
+    sample_rate_hz: float = 125e6,
+    n_fft: int = 2048,
+    threshold_db: float = 3.0,
+    center_freqs_mhz: tuple = (2405, 2420, 2435),
+    edge_margin_bins: int = 5,
+) -> int:
+    """
+    Symbolic RF center-frequency classification from STFT data.
+
+    Uses the −3 dB lower/upper cutoff frequencies to determine how the
+    signal sits within the captured band, then selects the optimal RF
+    center frequency from a fixed set.
+
+    Algorithm (depends on selected filter):
+        **20 MHz filter** (filter_class = 2):
+            Default centre is 2420 MHz.  Inspect the PSD for edge
+            truncation:
+            - If the lower −3 dB cutoff is near bin 0 → signal is
+              cropped on the left  → shift to 2405 MHz.
+            - If the upper −3 dB cutoff is near the last bin → signal
+              is cropped on the right → shift to 2435 MHz.
+            - Otherwise the signal is fully captured → stay at 2420 MHz.
+
+        **1 MHz / 10 MHz filter** (filter_class = 0 or 1):
+            The signal is narrow relative to the band, so it is fully
+            contained at any centre.  Estimate the signal's RF position
+            from its baseband offset and snap to the nearest of the
+            three candidate centre frequencies.
+
+    Args:
+        stft_complex: Complex STFT data, shape [freq_bins, time_frames].
+        filter_class: Filter class index (0 = 1 MHz, 1 = 10 MHz, 2 = 20 MHz).
+        sample_rate_hz: Sample rate in Hz (default 125 MSPS).
+        n_fft: FFT size (default 2048).
+        threshold_db: dB below peak for −3 dB cutoff (default 3.0).
+        center_freqs_mhz: Candidate RF center frequencies in MHz.
+        edge_margin_bins: How close to bin 0 / last bin counts as
+            "edge-truncated" for the 20 MHz path.
+
+    Returns:
+        Index into *center_freqs_mhz*: 0 → 2405, 1 → 2420, 2 → 2435 MHz.
+    """
+    import numpy as np
+
+    if isinstance(stft_complex, Tensor):
+        stft_np = stft_complex.detach().cpu().numpy()
+    else:
+        stft_np = stft_complex
+
+    n_bins = stft_np.shape[0]
+    freq_res_mhz = sample_rate_hz / n_fft / 1e6  # MHz per bin
+
+    # Compute PSD and −3 dB cutoffs (same as filter classify)
+    magnitude = np.abs(stft_np)
+    psd = np.mean(magnitude ** 2, axis=-1)
+    psd_db = 10.0 * np.log10(psd + 1e-12)
+    peak_db = psd_db.max()
+    above = np.where(psd_db >= peak_db - threshold_db)[0]
+
+    if len(above) == 0:
+        return 1  # fallback: default centre (2420 MHz)
+
+    lower_bin = above[0]
+    upper_bin = above[-1]
+
+    if filter_class == 2:
+        # ---- 20 MHz filter: edge-truncation detection ----
+        left_cropped = lower_bin <= edge_margin_bins
+        right_cropped = upper_bin >= (n_bins - 1 - edge_margin_bins)
+
+        if left_cropped and not right_cropped:
+            return 0  # shift left → 2405 MHz
+        elif right_cropped and not left_cropped:
+            return 2  # shift right → 2435 MHz
+        else:
+            return 1  # centred → 2420 MHz
+    else:
+        # ---- 1 / 10 MHz filter: position-based snap ----
+        # Signal's baseband centre in MHz
+        signal_center_mhz = (lower_bin + upper_bin) / 2.0 * freq_res_mhz
+        band_center_mhz = (n_bins / 2.0) * freq_res_mhz  # ~31.25 MHz
+
+        # Offset from band centre (positive = signal above centre)
+        offset_mhz = signal_center_mhz - band_center_mhz
+
+        # Assume receiver is currently tuned to default (2420 MHz)
+        estimated_rf_mhz = center_freqs_mhz[1] + offset_mhz
+
+        # Snap to nearest candidate
+        dists = [abs(estimated_rf_mhz - cf) for cf in center_freqs_mhz]
+        return int(np.argmin(dists))
+
+
 def symbolic_filter_classify_batch(
     stft_batch: Union[Tensor, "np.ndarray"],
     **kwargs,

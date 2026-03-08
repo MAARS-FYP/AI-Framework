@@ -7,6 +7,7 @@ from ai_framework.core.dsp import (
     calculate_evm,
     symbolic_filter_classify,
     symbolic_filter_classify_batch,
+    symbolic_center_freq_classify,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "calculate_evm",
     "symbolic_filter_classify",
     "symbolic_filter_classify_batch",
+    "symbolic_center_freq_classify",
 ]

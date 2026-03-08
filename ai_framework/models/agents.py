@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from ai_framework.core.dsp import symbolic_filter_classify
+from ai_framework.core.dsp import symbolic_filter_classify, symbolic_center_freq_classify
 
 
 class LNAAgent(nn.Module):
@@ -74,14 +74,49 @@ class FilterAgent:
 
 
 class MixerAgent(nn.Module):
-    """Regression: predicts normalized LO power."""
+    """
+    Hybrid agent: neural LO-power regression + symbolic centre-frequency
+    classification.
+
+    Neural output:   normalised LO power (float, via backbone latent).
+    Symbolic output: RF centre-frequency class (int, via raw STFT).
+        0 → 2405 MHz,  1 → 2420 MHz,  2 → 2435 MHz
+    """
+
+    CENTER_FREQS_MHZ = (2405, 2420, 2435)
 
     def __init__(self, latent_dim=64):
         super().__init__()
         self.net = nn.Sequential(nn.Linear(latent_dim, 32), nn.ReLU(), nn.Linear(32, 1))
 
     def forward(self, z):
+        """Neural LO-power regression."""
         return self.net(z).squeeze(-1)  # [B]
+
+    @staticmethod
+    def classify_center_freq(
+        stft_raw_batch: torch.Tensor,
+        filter_classes: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Symbolic centre-frequency classification from raw STFT data.
+
+        Args:
+            stft_raw_batch: Real-viewed complex STFT [B, freq, time, 2].
+            filter_classes:  Filter class per sample [B] (from FilterAgent).
+
+        Returns:
+            Tensor of centre-freq class indices [B], dtype=long.
+        """
+        stft_complex = torch.view_as_complex(stft_raw_batch)  # [B, freq, time]
+        stft_np = stft_complex.detach().cpu().numpy()
+        filt_np = filter_classes.detach().cpu().numpy()
+
+        preds = []
+        for i in range(stft_np.shape[0]):
+            cls = symbolic_center_freq_classify(stft_np[i], int(filt_np[i]))
+            preds.append(cls)
+        return torch.tensor(preds, dtype=torch.long)
 
 
 class IFAmpAgent(nn.Module):
