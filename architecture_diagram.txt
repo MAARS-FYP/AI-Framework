@@ -1,5 +1,5 @@
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════════╗
-║                          MAARS AI FRAMEWORK - MULTI-AGENT RF CONTROL PIPELINE                        ║
+║                        MAARS AI FRAMEWORK - NEUROSYMBOLIC RF CONTROL PIPELINE                        ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════════╝
 
 ════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -38,19 +38,19 @@
         └────────────────────────────────────────────────────────────────────┘
                   │                                     │
                   ▼                                     ▼
-┌───────────────────────────────────────────┐   ┌───────────────────────────────────────────┐
-│           SPECTROGRAM INPUT               │   │          SENSOR METRICS                   │
-│  ┌─────────────────────────────────────┐  │   │  ┌─────────────────────────────────────┐  │
-│  │  Shape: [B, 2, 1024, 5]             │  │   │  │  Shape: [B, 3]                      │  │
-│  │  ├── Channel 0: Real(STFT)          │  │   │  │  ├── Best_EVM_dB (from I/Q)         │  │
-│  │  └── Channel 1: Imag(STFT)          │  │   │  │  ├── Power_Post_LNA_dBm (from MCU)  │  │
-│  │                                     │  │   │  │  └── Power_Post_PA_dBm  (from MCU)  │  │
-│  │  Freq bins: 1024, Time frames: 5    │  │   │  │                                     │  │
-│  │  Per-sample Z-score normalized      │  │   │  │  StandardScaler normalized          │  │
-│  └─────────────────────────────────────┘  │   │  └─────────────────────────────────────┘  │
-└─────────────────────┬─────────────────────┘   └───────────────────┬───────────────────────┘
-                      │                                             │
-                      ▼                                             ▼
+┌──────────────────────────────────────────────┐ ┌───────────────────────────────────────────┐
+│     SPECTROGRAM INPUT (normalized)           │ │          SENSOR METRICS                   │
+│  ┌────────────────────────────────────────┐  │ │  ┌─────────────────────────────────────┐  │
+│  │  Shape: [B, 2, 1024, 5]                │  │ │  │  Shape: [B, 3]                      │  │
+│  │  ├── Channel 0: Real(STFT)             │  │ │  │  ├── Best_EVM_dB (from I/Q)         │  │
+│  │  └── Channel 1: Imag(STFT)             │  │ │  │  ├── Power_Post_LNA_dBm (from MCU)  │  │
+│  │                                        │  │ │  │  └── Power_Post_PA_dBm  (from MCU)  │  │
+│  │  Freq bins: 1024, Time frames: 5       │  │ │  │                                     │  │
+│  │  Per-sample Z-score normalized         │  │ │  │  StandardScaler normalized          │  │
+│  └────────────────────────────────────────┘  │ │  └─────────────────────────────────────┘  │
+└──────────────────────┬───────────────────────┘ └───────────────────┬───────────────────────┘
+                       │                                             │
+                       ▼                                             ▼
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════════╗
 ║                                    UNIFIED BACKBONE NETWORK                                          ║
 ╠══════════════════════════════════════════════════════════════════════════════════════════════════════╣
@@ -93,57 +93,64 @@
 ║                              │     LATENT VECTOR z             │                                     ║
 ║                              │     Shape: [B, 64]              │                                     ║
 ║                              │  (Shared representation for     │                                     ║
-║                              │   all downstream agents)        │                                     ║
+║                              │   neural agent heads)           │                                     ║
 ║                              └─────────────────────────────────┘                                     ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════════╝
-                                               │
-               ┌───────────────────────────────┼───────────────────────────────┐
-               │                   ┌───────────┴───────────┐                   │
-               │                   │                       │                   │
-               ▼                   ▼                       ▼                   ▼
-╔═══════════════════════╗ ╔═══════════════════════╗ ╔═══════════════════════╗ ╔═══════════════════════╗
-║      LNA AGENT        ║ ║     MIXER AGENT       ║ ║     FILTER AGENT      ║ ║    IF AMP AGENT       ║
-║  (Classification)     ║ ║     (Regression)      ║ ║   (Classification)    ║ ║    (Regression)       ║
-╠═══════════════════════╣ ╠═══════════════════════╣ ╠═══════════════════════╣ ╠═══════════════════════╣
-║                       ║ ║                       ║ ║                       ║ ║                       ║
-║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║ ║ ┌───────────────────┐ ║
-║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║ ║ │Linear(64→32)+ReLU │ ║
-║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║
-║ │Linear(32→2)       │ ║ ║ │Linear(32→1)       │ ║ ║ │Linear(32→3)       │ ║ ║ │Linear(32→1)       │ ║
-║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║ ║ │        ↓          │ ║
-║ │CE Loss (logits)   │ ║ ║ │MSE Loss (scaled)  │ ║ ║ │CE Loss (logits)   │ ║ ║ │MSE Loss (scaled)  │ ║
-║ └───────────────────┘ ║ ║ └───────────────────┘ ║ ║ └───────────────────┘ ║ ║ └───────────────────┘ ║
-║                       ║ ║                       ║ ║                       ║ ║                       ║
-║ Voltage Classes:      ║ ║ LO Power:             ║ ║ Filter Classes:       ║ ║ Gain Range:           ║
-║ ├── Class 0: 3.0 V    ║ ║ Optimal_LO_Power_dBm  ║ ║ ├── Class 0: 1 MHz    ║ ║ Optimal_IF_Gain_dB    ║
-║ └── Class 1: 5.0 V    ║ ║ (StandardScaler'd)    ║ ║ ├── Class 1: 10 MHz   ║ ║ (StandardScaler'd)    ║
-║                       ║ ║                       ║ ║ └── Class 2: 20 MHz   ║ ║                       ║
-║ Output: argmax        ║ ║ Output: continuous    ║ ║ Output: argmax        ║ ║ Output: continuous    ║
-║ → voltage lookup      ║ ║ → inverse_transform   ║ ║ → bandwidth lookup    ║ ║ → inverse_transform   ║
-╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝ ╚═══════════╤═══════════╝
-            │                         │                         │                         │
-            ▼                         ▼                         ▼                         ▼
-┌───────────────────────┐ ┌─────────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
-│   LNA VOLTAGE (V)     │ │   MIXER LO POWER (dBm)  │ │   FILTER BANDWIDTH    │ │   IF AMP GAIN (dB)    │
-│ ┌───────────────────┐ │ │ ┌─────────────────────┐ │ │ ┌───────────────────┐ │ │ ┌───────────────────┐ │
-│ │Values: 3.0V / 5.0V│ │ │ │Optimal_LO_Power_dBm │ │ │ │ 1 / 10 / 20 MHz   │ │ │ │Optimal_IF_Gain_dB │ │
-│ │Binary (2 classes) │ │ │ │Continuous (regress) │ │ │ │ Discrete          │ │ │ │Continuous         │ │
-│ └───────────────────┘ │ │ └─────────────────────┘ │ │ └───────────────────┘ │ │ └───────────────────┘ │
-└───────────┬───────────┘ └────────────┬────────────┘ └───────────┬───────────┘ └───────────┬───────────┘
-            │                          │                          │                         │
-            └──────────────────────────┴────────────┬─────────────┴─────────────────────────┘
-                                                    │
-                                                    ▼
+
+═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+TWO DATA PATHS:   ████ NEURAL (latent z)          ░░░░ SYMBOLIC (raw STFT)
+═════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+  Raw STFT ──────────────────────────────┬──────────────────────────────┐
+  [B, freq, time, 2]                     │                              │
+  (complex, real-viewed)                 │                              │
+                                         │                              │
+  Latent z ─┬────────────────────────────┼──────────────────────────────┼───────────────────────────┐
+  [B, 64]   │                            │                              │                           │
+            │                            │                              │                           │
+            ▼                            ▼                              ▼                           ▼
+╔═══════════════════════╗ ╔════════════════════════════╗ ╔════════════════════════════╗ ╔═══════════════════════╗
+║      LNA AGENT        ║ ║  MIXER AGENT (Hybrid)      ║ ║     FILTER AGENT           ║ ║     IF AMP AGENT      ║
+║  ████ Neural          ║ ║ ████ Neural + ░░░░ Symbolic║ ║ ░░░░ Symbolic (rule-based) ║ ║  ████ Neural          ║
+║  (Classification)     ║ ║                            ║ ║ No learnable parameters    ║ ║  (Regression)         ║
+╠═══════════════════════╣ ╠════════════════════════════╣ ╠════════════════════════════╣ ╠═══════════════════════╣
+║                       ║ ║ ████ LO Power (from z):    ║ ║                            ║ ║                       ║
+║ ┌───────────────────┐ ║ ║ ┌────────────────────────┐ ║ ║ Input: Raw complex STFT    ║ ║ ┌───────────────────┐ ║
+║ │Lin(64→32)+ReLU    │ ║ ║ │Linear(64→32)+ReLU      │ ║ ║                            ║ ║ │Lin(64→32)+ReLU    │ ║
+║ │       ↓           │ ║ ║ │Lin(32→1), MSE Loss     │ ║ ║ Algorithm:                 ║ ║ │       ↓           │ ║
+║ │Lin(32→2)          │ ║ ║ └────────────────────────┘ ║ ║ 1. PSD = |STFT|² → avg     ║ ║ │Lin(32→1)          │ ║
+║ │       ↓           │ ║ ║                            ║ ║ 2. Find -3 dB cutoffs      ║ ║ │       ↓           │ ║
+║ │CE Loss (logits)   │ ║ ║ ░░░░ Ctr Freq (from STFT): ║ ║ 3. BW = upper - lower      ║ ║ │MSE Loss (scaled)  │ ║
+║ └───────────────────┘ ║ ║ ┌────────────────────────┐ ║ ║ 4. Classify:               ║ ║ └───────────────────┘ ║
+║                       ║ ║ │Uses filter cls + STFT  │ ║ ║   <12 → 1 MHz  (cls 0)     ║ ║                       ║
+║ Voltage Classes:      ║ ║ │20MHz: edge-truncation  │ ║ ║   <25 → 10 MHz (cls 1)     ║ ║ Gain Range:           ║
+║ ├── Class 0: 3.0 V    ║ ║ │1/10MHz: offset snap    │ ║ ║   ≥25 → 20 MHz (cls 2)     ║ ║ Optimal_IF_Gain_dB    ║
+║ └── Class 1: 5.0 V    ║ ║ │→ {2405,2420,2435} MHz  │ ║ ║                            ║ ║ (StandardScaler'd)    ║
+║                       ║ ║ └────────────────────────┘ ║ ║ Accuracy: 97.3% (292/300)  ║ ║                       ║
+║ Output: argmax        ║ ║                            ║ ║                            ║ ║ Output: continuous    ║
+║ → voltage lookup      ║ ║ Output: LO pwr + ctr freq  ║ ║ Output: class {0,1,2}      ║ ║ → inverse_transform   ║
+║                       ║ ║                            ║ ║ → bandwidth lookup         ║ ║                       ║
+╚═══════════╤═══════════╝ ╚══════════════╤═════════════╝ ╚══════════════╤═════════════╝ ╚═══════════╤═══════════╝
+            │                            │                              │                           │
+            ▼                            ▼                              ▼                           ▼
+┌───────────────────────┐ ┌────────────────────────────┐ ┌────────────────────────────┐ ┌───────────────────────┐
+│   LNA VOLTAGE (V)     │ │   MIXER OUTPUTS            │ │   FILTER BANDWIDTH         │ │   IF AMP GAIN (dB)    │
+│ 3.0V / 5.0V (2 cls)   │ │ LO pwr (dBm) + ctr freq    │ │ 1/10/20 MHz (symbolic)     │ │ Continuous (regress)  │
+└───────────┬───────────┘ └──────────────┬─────────────┘ └──────────────┬─────────────┘ └───────────┬───────────┘
+            └────────────────────────────┴──────────────────────────────┴───────────────────────────┘
+                                                        │
+                                                        ▼
                           ╔════════════════════════════════════════╗
                           ║        HARDWARE CONTROL COMMANDS       ║
                           ╠════════════════════════════════════════╣
                           ║                                        ║
                           ║   ┌──────────────────────────────────┐ ║
                           ║   │  Example Output (per sample):    │ ║
-                          ║   │  ├── LNA Voltage:   5.0 V        │ ║
+                          ║   │  ├── LNA Voltage:    5.0 V       │ ║
                           ║   │  ├── Mixer LO Power: -15 dBm     │ ║
-                          ║   │  ├── Filter:        10 MHz       │ ║
-                          ║   │  └── IF Amp Gain:   +18 dB       │ ║
+                          ║   │  ├── Mixer Centre:   2420 MHz    │ ║
+                          ║   │  ├── Filter:         10 MHz      │ ║
+                          ║   │  └── IF Amp Gain:    +18 dB      │ ║
                           ║   └──────────────────────────────────┘ ║
                           ║                                        ║
                           ╚════════════════════════════════════════╝
@@ -178,13 +185,17 @@
           │                      LOSS FUNCTIONS                                 │
           ├─────────────────────────────────────────────────────────────────────┤
           │                                                                     │
-          │   Total Loss = L_lna + L_mixer + L_filter + L_if                    │
+          │   Total Loss = L_lna + L_mixer + L_if                               │
           │                (equal weights, simple sum)                          │
           │                                                                     │
-          │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐.  │ 
-          │   │ LNA (CE)    │ │Mixer (MSE)  │ │Filter (CE)  │ │ IF Amp (MSE)│.  │
-          │   │ cross-ent   │ │ LO power    │ │ cross-ent   │ │ IF gain     │.  │
-          │   └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘.  │
+          │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                  │
+          │   │ LNA (CE)    │ │Mixer (MSE)  │ │ IF Amp (MSE)│                  │
+          │   │ cross-ent   │ │ LO power    │ │ IF gain     │                  │
+          │   └─────────────┘ └─────────────┘ └─────────────┘                  │
+          │                                                                     │
+          │   NOTE: Filter Agent and Mixer centre-freq are symbolic             │
+          │   (rule-based) — they have no learnable parameters and              │
+          │   do NOT contribute to the training loss.                           │
           └─────────────────────────────────────────────────────────────────────┘
 
 
@@ -195,15 +206,18 @@
   ┌──────────────┬────────────────┬──────────────────────┬────────────────────┬─────────────────────┐
   │    Agent     │     Type       │      Output(s)       │       Range        │    Loss Function    │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │  LNA Agent   │ Classification │  Supply Voltage (V)  │  3.0V or 5.0V      │  Cross-Entropy      │
-  │              │  (binary)      │                      │  2 classes         │                     │
+  │  LNA Agent   │ Neural         │  Supply Voltage (V)  │  3.0V or 5.0V      │  Cross-Entropy      │
+  │              │ Classification │                      │  2 classes         │                     │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │ Mixer Agent  │  Regression    │  LO Power (dBm)      │  Optimal_LO_Power  │  MSE (normalized)   │
-  │              │  (continuous)  │                      │  StandardScaler'd  │                     │
+  │ Mixer Agent  │ Hybrid         │  1. LO Power (dBm)   │  Optimal_LO_Power  │  MSE (normalized)   │
+  │              │ Neural +       │     (neural, from z) │  StandardScaler'd  │  (LO power only)    │
+  │              │ Symbolic       │  2. Centre Freq (MHz)│  {2405,2420,2435}  │  None (symbolic)    │
+  │              │                │     (symbolic, STFT) │  3 classes         │                     │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │ Filter Agent │ Classification │  Filter Class Index  │  {0, 1, 2}         │  Cross-Entropy      │
-  │              │  (discrete)    │  → 1/10/20 MHz       │  3 classes         │                     │
+  │ Filter Agent │ Symbolic       │  Filter Class Index  │  {0, 1, 2}         │  None               │
+  │              │ (rule-based)   │  → 1/10/20 MHz       │  3 classes         │  (no learnable      │
+  │              │                │  from raw STFT       │                    │   parameters)       │
   ├──────────────┼────────────────┼──────────────────────┼────────────────────┼─────────────────────┤
-  │ IF Amp Agent │  Regression    │  Gain (dB)           │  Optimal_IF_Gain   │  MSE (normalized)   │
-  │              │  (continuous)  │                      │  StandardScaler'd  │                     │
+  │ IF Amp Agent │ Neural         │  Gain (dB)           │  Optimal_IF_Gain   │  MSE (normalized)   │
+  │              │ Regression     │                      │  StandardScaler'd  │                     │
   └──────────────┴────────────────┴──────────────────────┴────────────────────┴─────────────────────┘
