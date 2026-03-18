@@ -49,6 +49,44 @@ python -m ai_framework.train \
 
 Trained model and scalers are saved to `checkpoints/`.
 
+### Inference (End-to-End)
+
+Run end-to-end inference from fresh I/Q and two power measurements:
+
+- Inputs: I/Q samples, `power_lna_dbm`, `power_pa_dbm`
+- Internally computed: STFT and EVM
+- Outputs: LNA class, Filter class, Mixer LO power, Mixer center frequency class, IF amp gain
+
+```bash
+python -m ai_framework.cli.inference_cli \
+        --iq-npy input_iq.npy \
+        --power-lna-dbm -35.2 \
+        --power-pa-dbm -22.8 \
+        --checkpoint checkpoints/best_model.pt \
+        --scalers checkpoints/scalers.joblib
+```
+
+`input_iq.npy` can be:
+
+- complex 1D array (`complex64`/`complex128`) of I/Q samples, or
+- real `Nx2` array where columns are `[I, Q]`.
+
+For integration with external programs (e.g., Rust), you can use JSON input/output:
+
+```bash
+python -m ai_framework.cli.inference_cli --stdin-json << 'JSON'
+{
+    "iq_real": [0.1, 0.2, 0.3],
+    "iq_imag": [0.0, -0.1, 0.2],
+    "power_lna_dbm": -35.2,
+    "power_pa_dbm": -22.8,
+    "sample_rate_hz": 25000000.0
+}
+JSON
+```
+
+The CLI prints a stable JSON output payload to stdout (or `--output-json <path>`).
+
 ## Data Normalization
 
 **All data is automatically normalized** for optimal training:
@@ -65,6 +103,12 @@ ai_framework/
 ├── __init__.py            # Package version
 ├── config.py              # DSPConfig, logger utility
 ├── train.py               # Training script (CLI entry point)
+├── inference/
+│   ├── config.py          # InferenceConfig (STFT/symbolic/IO parameters)
+│   ├── engine.py          # RFInferenceEngine (end-to-end inference runtime)
+│   └── output.py          # Structured inference outputs
+├── cli/
+│   └── inference_cli.py   # JSON-capable inference CLI for external programs
 ├── core/
 │   └── dsp.py             # DSP utilities: STFT, EVM, PSD, symbolic classifiers
 ├── dataset/
