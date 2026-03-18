@@ -664,6 +664,7 @@ def symbolic_coupled_filter_center_select(
     center_tolerance_bins: float = 8.0,
     energy_floor_db: float = -90.0,
     min_span_bins: int = 2,
+    allow_center_shift: bool = False,
 ) -> tuple:
     """
     Coupled symbolic selection of (filter bandwidth class, mixer center frequency).
@@ -693,32 +694,30 @@ def symbolic_coupled_filter_center_select(
 
     measured_filter = classify_bw(obs["bw_mhz"])
     position = obs["position"]
+    default_center_class = 1
 
-    # Pseudo-code Step 1-2: initialize with 2420 MHz + 20 MHz assumption
-    center_class = 1
-    filter_class = 2
-
-    # Step 11: if no visible spectrum under current observation, invalid/no signal
-    # (in offline dataset we cannot re-tune RF and re-observe physically).
+    # If no visible spectrum under current observation, mark invalid/no signal.
     if obs["no_spectrum"]:
-        return 1, 1, "invalid_no_signal"
+        return 1, default_center_class, "invalid_no_signal"
 
-    # Step 4: 20 MHz and centered -> keep.
+    # Current dataset uses fixed 2420 MHz center. Keep center fixed unless
+    # explicit dynamic-shift mode is enabled.
+    if not allow_center_shift:
+        return measured_filter, default_center_class, "ok"
+
+    # Optional dynamic-shift mode for future datasets with variable centers.
+    if measured_filter in (0, 1):
+        return measured_filter, default_center_class, "ok"
+
     if measured_filter == 2 and position == "center":
-        return 2, 1, "ok"
+        return 2, default_center_class, "ok"
 
-    # Step 5: centered but narrower -> adjust BW only, keep 2420 MHz.
-    if position == "center" and measured_filter in (0, 1):
-        return measured_filter, 1, "ok"
-
-    # Step 6: left/right sided -> center is wrong, keep largest BW (20MHz), shift center.
     if position == "left":
         return 2, 0, "ok"
     if position == "right":
         return 2, 2, "ok"
 
-    # Conservative fallback
-    return measured_filter, center_class, "ok"
+    return measured_filter, default_center_class, "ok"
 
 
 def symbolic_filter_classify(
