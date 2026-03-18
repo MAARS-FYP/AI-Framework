@@ -389,6 +389,133 @@ def test_parameter_sweep(
     return best_config, results_table
 
 
+def _class_name_to_idx(class_name: str) -> int:
+    return {"1MHz": 0, "10MHz": 1, "20MHz": 2}[class_name]
+
+
+def _apply_boundaries(bandwidth_mhz: np.ndarray, low_mhz: float, high_mhz: float) -> np.ndarray:
+    pred = np.full_like(bandwidth_mhz, 2, dtype=np.int64)
+    pred[bandwidth_mhz < high_mhz] = 1
+    pred[bandwidth_mhz < low_mhz] = 0
+    return pred
+
+
+def calibrate_filter_boundaries(
+    threshold_db: float = 6.0,
+    sample_rate_hz: float = 125e6,
+    n_fft: int = 2048,
+):
+    """
+    Learn optimal symbolic filter class boundaries (low/high MHz) for a fixed cutoff.
+
+    Uses exhaustive search over ordered split positions on extracted bandwidths to
+    maximize class accuracy against Bandwidth_Hz-derived labels.
+    """
+    script_dir = Path(__file__).parent
+    data_dir = script_dir.parent / "dataset" / "data"
+
+    df = load_dataset_info(data_dir).copy()
+    df["Signal_BW_Class"] = df["Bandwidth_Hz"].apply(bandwidth_hz_to_class_name)
+
+    config = BandwidthConfig(
+        sample_rate_hz=sample_rate_hz,
+        n_fft=n_fft,
+        threshold_db=threshold_db,
+    )
+
+    measured_bw_mhz = []
+    target_idx = []
+
+    print("Extracting measured bandwidths for calibration...")
+    for _, row in df.iterrows():
+        stft_file = row["STFT_Complex_File"]
+        stft_data = load_stft_complex(data_dir, stft_file)
+        result = extract_bandwidth_from_stft(stft_data, config=config, return_debug_info=False)
+        measured_bw_mhz.append(result.bandwidth_hz / 1e6)
+        target_idx.append(_class_name_to_idx(row["Signal_BW_Class"]))
+
+    x = np.asarray(measured_bw_mhz, dtype=np.float64)
+    y = np.asarray(target_idx, dtype=np.int64)
+
+    # Baseline with existing default boundaries
+    baseline_low, baseline_high = 12.0, 25.0
+    baseline_pred = _apply_boundaries(x, baseline_low, baseline_high)
+    baseline_acc = float(np.mean(baseline_pred == y))
+
+    # Sort by measured bandwidth and search best ordered splits
+    order = np.argsort(x)
+    xs = x[order]
+    ys = y[order]
+    n = len(xs)
+
+    if n < 3:
+        raise ValueError("Need at least 3 samples to calibrate two boundaries")
+
+    pref = np.zeros((3, n + 1), dtype=np.int64)
+    for c in range(3):
+        pref[c, 1:] = np.cumsum(ys == c)
+    total = pref[:, n]
+
+    best_correct = -1
+    best_i = 1
+    best_j = 2
+
+    for i in range(1, n - 1):
+        # class0 for [0:i), class1 for [i:j), class2 for [j:n)
+        correct0 = pref[0, i]
+        js = np.arange(i + 1, n, dtype=np.int64)
+        correct1 = pref[1, js] - pref[1, i]
+        correct2 = total[2] - pref[2, js]
+        correct = correct0 + correct1 + correct2
+        k = int(np.argmax(correct))
+        if int(correct[k]) > best_correct:
+            best_correct = int(correct[k])
+            best_i = i
+            best_j = int(js[k])
+
+    best_low = float((xs[best_i - 1] + xs[best_i]) / 2.0)
+    best_high = float((xs[best_j - 1] + xs[best_j]) / 2.0)
+
+    best_pred = _apply_boundaries(x, best_low, best_high)
+    best_acc = float(np.mean(best_pred == y))
+
+    print("\n" + "=" * 70)
+    print("BOUNDARY CALIBRATION RESULTS")
+    print("=" * 70)
+    print(f"Cutoff threshold: {threshold_db:.1f} dB")
+    print(f"Baseline boundaries: low={baseline_low:.3f} MHz, high={baseline_high:.3f} MHz")
+    print(f"Baseline accuracy:  {baseline_acc * 100:.3f}%")
+    print("-")
+    print(f"Best boundaries:    low={best_low:.3f} MHz, high={best_high:.3f} MHz")
+    print(f"Best accuracy:      {best_acc * 100:.3f}%")
+    print("=" * 70)
+
+    # Confusion matrix for best boundaries
+    confusion = np.zeros((3, 3), dtype=np.int64)
+    for t, p in zip(y, best_pred):
+        confusion[t, p] += 1
+
+    print("Best-boundary confusion matrix (rows=true, cols=pred):")
+    labels = ["1MHz", "10MHz", "20MHz"]
+    print("            1MHz   10MHz   20MHz")
+    for r, lbl in enumerate(labels):
+        print(f"True {lbl:>5}: {confusion[r,0]:>6} {confusion[r,1]:>7} {confusion[r,2]:>7}")
+
+    return {
+        "threshold_db": threshold_db,
+        "baseline": {
+            "low_mhz": baseline_low,
+            "high_mhz": baseline_high,
+            "accuracy": baseline_acc,
+        },
+        "best": {
+            "low_mhz": best_low,
+            "high_mhz": best_high,
+            "accuracy": best_acc,
+        },
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Test bandwidth extraction from STFT data"
@@ -428,6 +555,11 @@ def main():
         help='Run parameter sweep to find optimal configuration'
     )
     parser.add_argument(
+        '--calibrate-boundaries',
+        action='store_true',
+        help='Auto-learn best bandwidth boundaries for the chosen cutoff threshold'
+    )
+    parser.add_argument(
         '--quiet', '-q',
         action='store_true',
         help='Suppress per-sample output'
@@ -437,6 +569,12 @@ def main():
     
     if args.sweep:
         test_parameter_sweep(num_samples=args.num_samples, verbose=not args.quiet)
+    elif args.calibrate_boundaries:
+        calibrate_filter_boundaries(
+            threshold_db=args.threshold,
+            sample_rate_hz=args.sample_rate,
+            n_fft=args.n_fft,
+        )
     else:
         run_bandwidth_test(
             num_samples=args.num_samples,
