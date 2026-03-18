@@ -8,10 +8,11 @@ from typing import Optional
 @dataclass
 class DSPConfig:
     """Config for STFT computation (used by core/dsp.py for real-time inference)."""
-    n_fft: int = 64
-    hop_length: int = 16
+    n_fft: int = 1024
+    hop_length: int = 512
     win_length: Optional[int] = None
-    center: bool = False
+    center: bool = True
+    sample_rate_hz: float = 25e6
 
     def __post_init__(self):
         if self.win_length is None:

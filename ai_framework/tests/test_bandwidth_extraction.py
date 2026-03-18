@@ -35,6 +35,17 @@ from ai_framework.core.dsp import (
 )
 
 
+def bandwidth_hz_to_class_name(bandwidth_hz: float) -> str:
+    bw = float(bandwidth_hz)
+    if bw == 1_000_000.0:
+        return "1MHz"
+    if bw == 10_000_000.0:
+        return "10MHz"
+    if bw == 20_000_000.0:
+        return "20MHz"
+    raise ValueError(f"Unsupported Bandwidth_Hz value: {bandwidth_hz}")
+
+
 def load_dataset_info(data_dir: Path) -> pd.DataFrame:
     """Load the optimal control dataset CSV."""
     csv_path = data_dir / "optimal_control_dataset.csv"
@@ -92,9 +103,11 @@ def run_bandwidth_test(
     
     # Load dataset info
     df = load_dataset_info(data_dir)
+    df = df.copy()
+    df["Signal_BW_Class"] = df["Bandwidth_Hz"].apply(bandwidth_hz_to_class_name)
     print(f"Loaded dataset with {len(df)} samples")
     print(f"Bandwidth class distribution:")
-    print(df['Detected_BW_Class'].value_counts().to_string())
+    print(df['Signal_BW_Class'].value_counts().to_string())
     print()
     
     # Limit samples if needed
@@ -131,7 +144,7 @@ def run_bandwidth_test(
         row = df.iloc[idx]
         
         # Get ground truth
-        true_bw_class = row['Detected_BW_Class']
+        true_bw_class = row['Signal_BW_Class']
         true_bw_hz = row['Bandwidth_Hz']
         stft_file = row['STFT_Complex_File']
         

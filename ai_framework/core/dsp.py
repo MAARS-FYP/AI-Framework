@@ -11,8 +11,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, Union
 
+import numpy as np
 import torch
 from torch import Tensor
+from scipy import signal
 
 from ai_framework.config import DSPConfig, get_logger
 
@@ -30,18 +32,23 @@ def compute_spectrogram(
     """
     Convert raw I/Q data to a 2-channel spectrogram (Real/Imaginary).
     
-    Performs Short-Time Fourier Transform (STFT) on the input signal and
-    stacks the real and imaginary components as separate channels.
+        Performs Short-Time Fourier Transform (STFT) using the same settings as
+        dataset generation (scipy.signal.stft):
+            - nperseg = min(n_fft, signal_length)
+            - noverlap = nperseg // 2
+            - return_onesided = False
+
+        Then stacks the real and imaginary components as separate channels.
     
     Args:
         iq_data: Complex-valued I/Q samples.
             Shape: [batch, time_steps] or [time_steps]
         config: DSP configuration object. If provided, other parameters
             override config values.
-        n_fft: Number of FFT points. Default: 64
-        hop_length: Hop length between frames. Default: 16
+        n_fft: Maximum STFT segment size (FFT_SIZE_STFT). Default: 1024
+        hop_length: Unused directly for SciPy path; kept for API compatibility.
         win_length: Window length. Default: n_fft
-        center: Whether to pad signal. Default: False
+        center: Whether to center frames (maps to SciPy boundary/padding behavior).
     
     Returns:
         Spectrogram tensor with real and imaginary channels.
@@ -89,15 +96,29 @@ def compute_spectrogram(
         f"win_length={_win_length}, center={_center}"
     )
     
-    # Compute STFT
-    spec = torch.stft(
-        iq_data,
-        n_fft=_n_fft,
-        hop_length=_hop_length,
-        win_length=_win_length,
-        return_complex=True,
-        center=_center,
-    )
+    # Compute STFT (SciPy path to mirror dataset generation algorithm)
+    spec_batch = []
+    for b in range(iq_data.shape[0]):
+        rx_signal = iq_data[b].detach().cpu().numpy()
+        nperseg = min(int(_n_fft), int(rx_signal.shape[-1]))
+        if nperseg < 1:
+            raise ValueError("Input signal length must be >= 1")
+        noverlap = nperseg // 2 if nperseg > 1 else 0
+
+        _, _, zxx = signal.stft(
+            rx_signal,
+            fs=config.sample_rate_hz,
+            window="hann",
+            nperseg=nperseg,
+            noverlap=noverlap,
+            return_onesided=False,
+            boundary="zeros" if _center else None,
+            padded=bool(_center),
+            detrend=False,
+        )
+        spec_batch.append(torch.from_numpy(zxx.astype(np.complex64)))
+
+    spec = torch.stack(spec_batch, dim=0).to(iq_data.device)
     
     # Stack Real and Imag parts to make it "Image-like" for the CNN
     # Shape: [batch, 2, freq_bins, time_frames]

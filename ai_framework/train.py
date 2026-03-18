@@ -179,7 +179,7 @@ def train(
     print(f"FINAL VALIDATION METRICS (last epoch)")
     print(f"{'='*60}")
     print(f"  LNA Agent     (neural, classification):  {lna_acc:.1f}% accuracy")
-    print(f"  Filter Agent  (symbolic, rule-based):    {filt_acc:.1f}% accuracy")
+    print(f"  Filter Agent  (symbolic vs Bandwidth_Hz):      {filt_acc:.1f}% accuracy")
     print(f"  Mixer Agent   (neural, LO power):        R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
     print(f"  Mixer Agent   (symbolic, centre freq):   "
           f"2405={center_freq_counts[0]}, "

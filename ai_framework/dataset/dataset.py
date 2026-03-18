@@ -7,7 +7,7 @@ from pathlib import Path
 from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.preprocessing import StandardScaler
 
-FILTER_CLASS_MAP = {"1MHz": 0, "10MHz": 1, "20MHz": 2}
+SIGNAL_BW_CLASS_MAP = {1_000_000.0: 0, 10_000_000.0: 1, 20_000_000.0: 2}
 
 
 class RFDataset(Dataset):
@@ -20,7 +20,7 @@ class RFDataset(Dataset):
 
     Targets per sample:
         lna:         class index  (0=3V, 1=5V)
-        filter:      class index  (0=1MHz, 1=10MHz, 2=20MHz)
+        filter:      class index from Bandwidth_Hz (0=1MHz, 1=10MHz, 2=20MHz)
         if_amp:      float        (StandardScaler'd IF gain)
         mixer_power: float        (StandardScaler'd LO power)
     """
@@ -31,8 +31,14 @@ class RFDataset(Dataset):
 
         # Classification targets
         self.lna_targets = (df["Optimal_LNA_Voltage_V"] > 4.0).astype(int).values # Binary classification: 3V vs 5V
-        self.filter_targets = df["Detected_BW_Class"].map(FILTER_CLASS_MAP).values
+        self.filter_targets = df["Bandwidth_Hz"].map(SIGNAL_BW_CLASS_MAP).values
         self.stft_files = df["STFT_Complex_File"].values
+
+        if pd.isna(self.filter_targets).any():
+            unknown = sorted(df.loc[pd.isna(self.filter_targets), "Bandwidth_Hz"].unique().tolist())
+            raise ValueError(f"Unsupported Bandwidth_Hz values for filter targets: {unknown}")
+
+        self.filter_targets = self.filter_targets.astype(np.int64)
 
         # Fit or reuse scalers
         metric_cols = ["Best_EVM_dB", "Measured_Power_Post_LNA_dBm", "Measured_Power_Post_PA_dBm"]
