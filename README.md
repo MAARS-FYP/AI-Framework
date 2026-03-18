@@ -87,6 +87,47 @@ JSON
 
 The CLI prints a stable JSON output payload to stdout (or `--output-json <path>`).
 
+### Continuous Low-Latency Inference (Recommended for Rust Loop)
+
+For continuous RF control loops, do **not** spawn the JSON CLI every cycle.
+Use the persistent socket worker so models are loaded once and reused.
+
+Start worker (Python side):
+
+```bash
+python -m ai_framework.inference.worker \
+    --socket-path /tmp/maars_infer.sock \
+    --checkpoint checkpoints/best_model.pt \
+    --scalers checkpoints/scalers.joblib \
+    --sample-rate-hz 25000000
+```
+
+Then your Rust process can keep one Unix domain socket connection open and send binary inference requests repeatedly.
+
+Debug/test client examples:
+
+```bash
+# health check
+python -m ai_framework.cli.inference_socket_client --socket-path /tmp/maars_infer.sock --ping
+
+# one inference request
+python -m ai_framework.cli.inference_socket_client \
+    --socket-path /tmp/maars_infer.sock \
+    --iq-npy input_iq.npy \
+    --power-lna-dbm -35.2 \
+    --power-pa-dbm -22.8 \
+    --sample-rate-hz 25000000
+
+# graceful shutdown
+python -m ai_framework.cli.inference_socket_client --socket-path /tmp/maars_infer.sock --shutdown
+```
+
+This path removes major overheads:
+
+- No model/scaler reload per request
+- No per-cycle process startup
+- Compact binary IPC (no long JSON payloads in hot path)
+
 ## Data Normalization
 
 **All data is automatically normalized** for optimal training:
@@ -106,9 +147,12 @@ ai_framework/
 ├── inference/
 │   ├── config.py          # InferenceConfig (STFT/symbolic/IO parameters)
 │   ├── engine.py          # RFInferenceEngine (end-to-end inference runtime)
-│   └── output.py          # Structured inference outputs
+│   ├── output.py          # Structured inference outputs
+│   ├── protocol.py        # Binary IPC protocol for persistent worker
+│   └── worker.py          # Persistent Unix-socket inference worker
 ├── cli/
-│   └── inference_cli.py   # JSON-capable inference CLI for external programs
+│   ├── inference_cli.py   # JSON-capable inference CLI for external programs
+│   └── inference_socket_client.py # Socket client (debug/integration testing)
 ├── core/
 │   └── dsp.py             # DSP utilities: STFT, EVM, PSD, symbolic classifiers
 ├── dataset/

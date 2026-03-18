@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import joblib
 import numpy as np
-import pandas as pd
 import torch
 
 from ai_framework.config import DSPConfig
@@ -51,6 +50,10 @@ class RFInferenceEngine:
         self.if_amp.eval()
 
         self.scalers = joblib.load(Path(scalers_path))
+        metrics_scaler = self.scalers["metrics"]
+        self.metrics_mean = np.asarray(metrics_scaler.mean_, dtype=np.float32)
+        self.metrics_scale = np.asarray(metrics_scaler.scale_, dtype=np.float32)
+        self.metrics_scale[self.metrics_scale == 0.0] = 1.0
 
     @staticmethod
     def _resolve_device(device: str) -> torch.device:
@@ -114,11 +117,8 @@ class RFInferenceEngine:
             raise ValueError("Only blind EVM mode is currently implemented.")
         evm_value = float(calculate_evm(iq_batch, reference_data=None, normalize=True).item())
 
-        metrics_df = pd.DataFrame(
-            [[evm_value, float(power_lna_dbm), float(power_pa_dbm)]],
-            columns=["Best_EVM_dB", "Measured_Power_Post_LNA_dBm", "Measured_Power_Post_PA_dBm"],
-        )
-        metrics_norm = self.scalers["metrics"].transform(metrics_df).astype(np.float32)
+        metrics = np.array([[evm_value, float(power_lna_dbm), float(power_pa_dbm)]], dtype=np.float32)
+        metrics_norm = ((metrics - self.metrics_mean[None, :]) / self.metrics_scale[None, :]).astype(np.float32)
 
         spec_norm = self._zscore_spectrogram(spec)
         metrics_tensor = torch.from_numpy(metrics_norm)
@@ -132,6 +132,54 @@ class RFInferenceEngine:
         power_pa_dbm: float,
         sample_rate_hz: Optional[float] = None,
     ) -> InferenceOutput:
+        raw = self.infer_compact(
+            iq_samples=iq_samples,
+            power_lna_dbm=power_lna_dbm,
+            power_pa_dbm=power_pa_dbm,
+            sample_rate_hz=sample_rate_hz,
+        )
+
+        center_label = f"{self.config.center_freqs_mhz[int(raw['center_class'])]} MHz"
+
+        return InferenceOutput(
+            lna=AgentOutput(value=raw["lna_class"], unit="class", label=LNA_LABELS[raw["lna_class"]]),
+            filter=AgentOutput(
+                value=raw["filter_class"],
+                unit="class",
+                label=FILTER_LABELS[raw["filter_class"]],
+                status=raw["status"],
+            ),
+            mixer_power=AgentOutput(value=raw["mixer_dbm"], unit="dBm", label="Optimal_LO_Power_dBm"),
+            mixer_center_freq=AgentOutput(
+                value=raw["center_class"],
+                unit="class",
+                label=center_label,
+                status=raw["status"],
+            ),
+            if_amp=AgentOutput(value=raw["ifamp_db"], unit="dB", label="Optimal_IF_Gain_dB"),
+            metadata={
+                "evm": {
+                    "value": raw["evm_value"],
+                    "unit": "percent",
+                    "mode": self.config.evm_mode,
+                    "modulation": self.config.modulation,
+                },
+                "sample_rate_hz": raw["sample_rate_hz"],
+                "processing_time_ms": raw["processing_time_ms"],
+                "engine": "RFInferenceEngine",
+                "version": "1.0",
+                "device": str(self.device),
+                "config": asdict(self.config),
+            },
+        )
+
+    def infer_compact(
+        self,
+        iq_samples: Any,
+        power_lna_dbm: float,
+        power_pa_dbm: float,
+        sample_rate_hz: Optional[float] = None,
+    ) -> Dict[str, Any]:
         t0 = time.perf_counter()
         iq_complex = self._to_complex_iq(iq_samples)
 
@@ -170,40 +218,17 @@ class RFInferenceEngine:
             )
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
-
-        center_label = f"{self.config.center_freqs_mhz[int(center_class)]} MHz"
-
-        return InferenceOutput(
-            lna=AgentOutput(value=lna_class, unit="class", label=LNA_LABELS[lna_class]),
-            filter=AgentOutput(
-                value=int(filter_class),
-                unit="class",
-                label=FILTER_LABELS[int(filter_class)],
-                status=sym_status,
-            ),
-            mixer_power=AgentOutput(value=mixer_dbm, unit="dBm", label="Optimal_LO_Power_dBm"),
-            mixer_center_freq=AgentOutput(
-                value=int(center_class),
-                unit="class",
-                label=center_label,
-                status=sym_status,
-            ),
-            if_amp=AgentOutput(value=ifamp_db, unit="dB", label="Optimal_IF_Gain_dB"),
-            metadata={
-                "evm": {
-                    "value": evm_value,
-                    "unit": "percent",
-                    "mode": self.config.evm_mode,
-                    "modulation": self.config.modulation,
-                },
-                "sample_rate_hz": sr,
-                "processing_time_ms": round(elapsed_ms, 4),
-                "engine": "RFInferenceEngine",
-                "version": "1.0",
-                "device": str(self.device),
-                "config": asdict(self.config),
-            },
-        )
+        return {
+            "lna_class": int(lna_class),
+            "filter_class": int(filter_class),
+            "center_class": int(center_class),
+            "mixer_dbm": float(mixer_dbm),
+            "ifamp_db": float(ifamp_db),
+            "evm_value": float(evm_value),
+            "sample_rate_hz": float(sr),
+            "processing_time_ms": round(float(elapsed_ms), 4),
+            "status": str(sym_status),
+        }
 
     def batch_infer_from_iq_and_power(
         self,
