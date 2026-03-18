@@ -118,10 +118,13 @@ def train(
                 filt_preds = filt(stft_raw)
                 filt_correct += (filt_preds == tgt["filter"].cpu()).sum().item()
 
-                # Symbolic centre-frequency classification
-                cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
+                # Symbolic centre-frequency classification (coupled with filter decision)
+                cf_preds = filt.last_center_freq_preds()
+                if cf_preds.numel() == 0:
+                    cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
                 for c in cf_preds.tolist():
-                    center_freq_counts[c] += 1
+                    if 0 <= c < len(center_freq_counts):
+                        center_freq_counts[c] += 1
 
                 # Regression metrics (on normalized scale)
                 mixer_pred = mixer(z)

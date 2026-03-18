@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from ai_framework.core.dsp import symbolic_filter_classify, symbolic_center_freq_classify
+from ai_framework.core.dsp import symbolic_coupled_filter_center_select
 
 
 class LNAAgent(nn.Module):
@@ -42,6 +42,10 @@ class FilterAgent:
 
     FILTER_NAMES = {0: "1MHz", 1: "10MHz", 2: "20MHz"}
 
+    def __init__(self):
+        self._last_center_freq_preds = None
+        self._last_status = None
+
     def __call__(self, stft_raw_batch: torch.Tensor) -> torch.Tensor:
         """
         Predict filter class from raw complex STFT data.
@@ -57,10 +61,25 @@ class FilterAgent:
         stft_np = stft_complex.detach().cpu().numpy()
 
         preds = []
+        center_preds = []
+        status = []
         for i in range(stft_np.shape[0]):
-            cls = symbolic_filter_classify(stft_np[i])
-            preds.append(cls)
+            filt_cls, center_cls, state = symbolic_coupled_filter_center_select(stft_np[i])
+            preds.append(filt_cls)
+            center_preds.append(center_cls)
+            status.append(state)
+
+        self._last_center_freq_preds = torch.tensor(center_preds, dtype=torch.long)
+        self._last_status = status
         return torch.tensor(preds, dtype=torch.long)
+
+    def last_center_freq_preds(self) -> torch.Tensor:
+        if self._last_center_freq_preds is None:
+            return torch.empty(0, dtype=torch.long)
+        return self._last_center_freq_preds
+
+    def last_status(self):
+        return self._last_status
 
     def parameters(self):
         """No learnable parameters."""
@@ -110,12 +129,11 @@ class MixerAgent(nn.Module):
         """
         stft_complex = torch.view_as_complex(stft_raw_batch)  # [B, freq, time]
         stft_np = stft_complex.detach().cpu().numpy()
-        filt_np = filter_classes.detach().cpu().numpy()
 
         preds = []
         for i in range(stft_np.shape[0]):
-            cls = symbolic_center_freq_classify(stft_np[i], int(filt_np[i]))
-            preds.append(cls)
+            _, center_cls, _ = symbolic_coupled_filter_center_select(stft_np[i])
+            preds.append(center_cls)
         return torch.tensor(preds, dtype=torch.long)
 
 

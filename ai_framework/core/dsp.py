@@ -574,6 +574,153 @@ FILTER_CLASS_MAP_SYM = {0: "1MHz", 1: "10MHz", 2: "20MHz"}
 FILTER_CLASS_INV_SYM = {"1MHz": 0, "10MHz": 1, "20MHz": 2}
 
 
+def _extract_symbolic_observation(
+    stft_complex: Union[Tensor, "np.ndarray"],
+    sample_rate_hz: float,
+    n_fft: int,
+    threshold_db: float,
+    center_tolerance_bins: float,
+    edge_margin_bins: int,
+    energy_floor_db: float,
+    min_span_bins: int,
+) -> dict:
+    """Extract shared PSD/cutoff observation used by coupled symbolic logic."""
+    import numpy as np
+
+    if isinstance(stft_complex, Tensor):
+        stft_np = stft_complex.detach().cpu().numpy()
+    else:
+        stft_np = stft_complex
+
+    magnitude = np.abs(stft_np)
+    psd = np.mean(magnitude ** 2, axis=-1)
+    psd_db = 10.0 * np.log10(psd + 1e-12)
+
+    peak_db = float(psd_db.max()) if psd_db.size > 0 else -np.inf
+    threshold_level = peak_db - threshold_db
+    above = np.where(psd_db >= threshold_level)[0]
+
+    n_bins = int(stft_np.shape[0])
+    band_center_bin = (n_bins - 1) / 2.0
+    peak_bin = int(np.argmax(psd_db)) if psd_db.size > 0 else int(band_center_bin)
+
+    has_cutoffs = len(above) > 0
+    if has_cutoffs:
+        lower_bin = int(above[0])
+        upper_bin = int(above[-1])
+        span_bins = int(upper_bin - lower_bin)
+        signal_center_bin = (lower_bin + upper_bin) / 2.0
+    else:
+        lower_bin = peak_bin
+        upper_bin = peak_bin
+        span_bins = 0
+        signal_center_bin = float(peak_bin)
+
+    freq_res_mhz = sample_rate_hz / n_fft / 1e6
+    bw_mhz = span_bins * freq_res_mhz
+
+    # "No spectrum" = low energy + degenerate cutoff span (both conditions)
+    low_energy = peak_db < energy_floor_db
+    degenerate_span = (not has_cutoffs) or (span_bins < min_span_bins)
+    no_spectrum = low_energy and degenerate_span
+
+    offset_bins = signal_center_bin - band_center_bin
+    left_edge = lower_bin <= edge_margin_bins
+    right_edge = upper_bin >= (n_bins - 1 - edge_margin_bins)
+
+    if left_edge and not right_edge:
+        position = "left"
+    elif right_edge and not left_edge:
+        position = "right"
+    elif offset_bins < -center_tolerance_bins:
+        position = "left"
+    elif offset_bins > center_tolerance_bins:
+        position = "right"
+    else:
+        position = "center"
+
+    return {
+        "n_bins": n_bins,
+        "peak_db": peak_db,
+        "peak_bin": peak_bin,
+        "lower_bin": lower_bin,
+        "upper_bin": upper_bin,
+        "span_bins": span_bins,
+        "bw_mhz": float(bw_mhz),
+        "position": position,
+        "no_spectrum": bool(no_spectrum),
+    }
+
+
+def symbolic_coupled_filter_center_select(
+    stft_complex: Union[Tensor, "np.ndarray"],
+    sample_rate_hz: float = 125e6,
+    n_fft: int = 2048,
+    threshold_db: float = 3.0,
+    boundary_low_mhz: float = 12.0,
+    boundary_high_mhz: float = 25.0,
+    center_freqs_mhz: tuple = (2405, 2420, 2435),
+    edge_margin_bins: int = 5,
+    center_tolerance_bins: float = 8.0,
+    energy_floor_db: float = -90.0,
+    min_span_bins: int = 2,
+) -> tuple:
+    """
+    Coupled symbolic selection of (filter bandwidth class, mixer center frequency).
+
+    Returns:
+        (filter_class, center_freq_class, status)
+        status in {"ok", "invalid_no_signal"}
+    """
+    obs = _extract_symbolic_observation(
+        stft_complex=stft_complex,
+        sample_rate_hz=sample_rate_hz,
+        n_fft=n_fft,
+        threshold_db=threshold_db,
+        center_tolerance_bins=center_tolerance_bins,
+        edge_margin_bins=edge_margin_bins,
+        energy_floor_db=energy_floor_db,
+        min_span_bins=min_span_bins,
+    )
+
+    # Helper: classify BW from measured span using existing robust boundaries.
+    def classify_bw(bw_mhz: float) -> int:
+        if bw_mhz < boundary_low_mhz:
+            return 0
+        if bw_mhz < boundary_high_mhz:
+            return 1
+        return 2
+
+    measured_filter = classify_bw(obs["bw_mhz"])
+    position = obs["position"]
+
+    # Pseudo-code Step 1-2: initialize with 2420 MHz + 20 MHz assumption
+    center_class = 1
+    filter_class = 2
+
+    # Step 11: if no visible spectrum under current observation, invalid/no signal
+    # (in offline dataset we cannot re-tune RF and re-observe physically).
+    if obs["no_spectrum"]:
+        return 1, 1, "invalid_no_signal"
+
+    # Step 4: 20 MHz and centered -> keep.
+    if measured_filter == 2 and position == "center":
+        return 2, 1, "ok"
+
+    # Step 5: centered but narrower -> adjust BW only, keep 2420 MHz.
+    if position == "center" and measured_filter in (0, 1):
+        return measured_filter, 1, "ok"
+
+    # Step 6: left/right sided -> center is wrong, keep largest BW (20MHz), shift center.
+    if position == "left":
+        return 2, 0, "ok"
+    if position == "right":
+        return 2, 2, "ok"
+
+    # Conservative fallback
+    return measured_filter, center_class, "ok"
+
+
 def symbolic_filter_classify(
     stft_complex: Union[Tensor, "np.ndarray"],
     sample_rate_hz: float = 125e6,
@@ -614,41 +761,15 @@ def symbolic_filter_classify(
     Returns:
         Filter class index: 0 (1 MHz), 1 (10 MHz), or 2 (20 MHz).
     """
-    import numpy as np
-
-    if isinstance(stft_complex, Tensor):
-        stft_np = stft_complex.detach().cpu().numpy()
-    else:
-        stft_np = stft_complex
-
-    # Step 1: magnitude → PSD (time-averaged power spectrum)
-    magnitude = np.abs(stft_np)  # [freq_bins, time_frames]
-    psd = np.mean(magnitude ** 2, axis=-1)  # [freq_bins]
-
-    # Step 2-3: threshold to remove tails
-    psd_db = 10.0 * np.log10(psd + 1e-12)
-    peak_db = psd_db.max()
-    threshold_level = peak_db - threshold_db
-
-    above = np.where(psd_db >= threshold_level)[0]
-
-    if len(above) == 0:
-        # Fallback: use entire spectrum width
-        bw_bins = len(psd) - 1
-    else:
-        bw_bins = above[-1] - above[0]
-
-    # Step 4: convert bins to MHz
-    freq_res_hz = sample_rate_hz / n_fft
-    bw_mhz = bw_bins * freq_res_hz / 1e6
-
-    # Step 5: classify
-    if bw_mhz < boundary_low_mhz:
-        return 0  # 1 MHz filter
-    elif bw_mhz < boundary_high_mhz:
-        return 1  # 10 MHz filter
-    else:
-        return 2  # 20 MHz filter
+    filter_class, _, _ = symbolic_coupled_filter_center_select(
+        stft_complex=stft_complex,
+        sample_rate_hz=sample_rate_hz,
+        n_fft=n_fft,
+        threshold_db=threshold_db,
+        boundary_low_mhz=boundary_low_mhz,
+        boundary_high_mhz=boundary_high_mhz,
+    )
+    return int(filter_class)
 
 
 def symbolic_center_freq_classify(
@@ -696,55 +817,15 @@ def symbolic_center_freq_classify(
     Returns:
         Index into *center_freqs_mhz*: 0 → 2405, 1 → 2420, 2 → 2435 MHz.
     """
-    import numpy as np
-
-    if isinstance(stft_complex, Tensor):
-        stft_np = stft_complex.detach().cpu().numpy()
-    else:
-        stft_np = stft_complex
-
-    n_bins = stft_np.shape[0]
-    freq_res_mhz = sample_rate_hz / n_fft / 1e6  # MHz per bin
-
-    # Compute PSD and −3 dB cutoffs (same as filter classify)
-    magnitude = np.abs(stft_np)
-    psd = np.mean(magnitude ** 2, axis=-1)
-    psd_db = 10.0 * np.log10(psd + 1e-12)
-    peak_db = psd_db.max()
-    above = np.where(psd_db >= peak_db - threshold_db)[0]
-
-    if len(above) == 0:
-        return 1  # fallback: default centre (2420 MHz)
-
-    lower_bin = above[0]
-    upper_bin = above[-1]
-
-    if filter_class == 2:
-        # ---- 20 MHz filter: edge-truncation detection ----
-        left_cropped = lower_bin <= edge_margin_bins
-        right_cropped = upper_bin >= (n_bins - 1 - edge_margin_bins)
-
-        if left_cropped and not right_cropped:
-            return 0  # shift left → 2405 MHz
-        elif right_cropped and not left_cropped:
-            return 2  # shift right → 2435 MHz
-        else:
-            return 1  # centred → 2420 MHz
-    else:
-        # ---- 1 / 10 MHz filter: position-based snap ----
-        # Signal's baseband centre in MHz
-        signal_center_mhz = (lower_bin + upper_bin) / 2.0 * freq_res_mhz
-        band_center_mhz = (n_bins / 2.0) * freq_res_mhz  # ~31.25 MHz
-
-        # Offset from band centre (positive = signal above centre)
-        offset_mhz = signal_center_mhz - band_center_mhz
-
-        # Assume receiver is currently tuned to default (2420 MHz)
-        estimated_rf_mhz = center_freqs_mhz[1] + offset_mhz
-
-        # Snap to nearest candidate
-        dists = [abs(estimated_rf_mhz - cf) for cf in center_freqs_mhz]
-        return int(np.argmin(dists))
+    _, center_class, _ = symbolic_coupled_filter_center_select(
+        stft_complex=stft_complex,
+        sample_rate_hz=sample_rate_hz,
+        n_fft=n_fft,
+        threshold_db=threshold_db,
+        center_freqs_mhz=center_freqs_mhz,
+        edge_margin_bins=edge_margin_bins,
+    )
+    return int(center_class)
 
 
 def symbolic_filter_classify_batch(

@@ -32,6 +32,7 @@ from ai_framework.core.dsp import (
     classify_bandwidth,
     BandwidthConfig,
     BandwidthResult,
+    symbolic_coupled_filter_center_select,
 )
 
 
@@ -261,6 +262,60 @@ def run_bandwidth_test(
         },
         'results': results,
         'confusion_matrix': confusion,
+    }
+
+
+def run_coupled_symbolic_test(
+    num_samples: int = 100,
+    threshold_db: float = 3.0,
+):
+    """Evaluate coupled symbolic (filter + center) routine on dataset STFT files."""
+    script_dir = Path(__file__).parent
+    data_dir = script_dir.parent / "dataset" / "data"
+
+    df = load_dataset_info(data_dir).copy()
+    df["Signal_BW_Class"] = df["Bandwidth_Hz"].apply(bandwidth_hz_to_class_name)
+
+    class_to_idx = {"1MHz": 0, "10MHz": 1, "20MHz": 2}
+
+    n = min(num_samples, len(df))
+    correct = 0
+    invalid = 0
+    cf_counts = [0, 0, 0]
+
+    for i in range(n):
+        row = df.iloc[i]
+        stft = load_stft_complex(data_dir, row["STFT_Complex_File"])
+        filt_cls, center_cls, status = symbolic_coupled_filter_center_select(
+            stft,
+            threshold_db=threshold_db,
+        )
+
+        if status == "invalid_no_signal":
+            invalid += 1
+
+        true_cls = class_to_idx[row["Signal_BW_Class"]]
+        if filt_cls == true_cls:
+            correct += 1
+
+        if 0 <= center_cls < 3:
+            cf_counts[center_cls] += 1
+
+    acc = correct / n if n > 0 else 0.0
+    print("\n" + "=" * 70)
+    print("COUPLED SYMBOLIC TEST")
+    print("=" * 70)
+    print(f"Samples tested: {n}")
+    print(f"Filter accuracy vs Bandwidth_Hz: {acc * 100:.2f}%")
+    print(f"Center-frequency predictions [2405, 2420, 2435]: {cf_counts}")
+    print(f"Invalid/no-signal count: {invalid}")
+    print("=" * 70)
+
+    return {
+        "samples": n,
+        "filter_accuracy": acc,
+        "center_freq_counts": cf_counts,
+        "invalid_count": invalid,
     }
 
 
@@ -560,6 +615,11 @@ def main():
         help='Auto-learn best bandwidth boundaries for the chosen cutoff threshold'
     )
     parser.add_argument(
+        '--coupled',
+        action='store_true',
+        help='Run coupled symbolic filter+center-frequency evaluation'
+    )
+    parser.add_argument(
         '--quiet', '-q',
         action='store_true',
         help='Suppress per-sample output'
@@ -574,6 +634,11 @@ def main():
             threshold_db=args.threshold,
             sample_rate_hz=args.sample_rate,
             n_fft=args.n_fft,
+        )
+    elif args.coupled:
+        run_coupled_symbolic_test(
+            num_samples=args.num_samples,
+            threshold_db=args.threshold,
         )
     else:
         run_bandwidth_test(
