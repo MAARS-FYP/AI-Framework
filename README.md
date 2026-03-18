@@ -128,6 +128,47 @@ This path removes major overheads:
 - No per-cycle process startup
 - Compact binary IPC (no long JSON payloads in hot path)
 
+### Shared-Memory Ring Buffer Mode (Lower Copy Overhead)
+
+To reduce socket payload copies further, use shared memory for IQ samples and send only descriptors over the socket.
+
+Worker with SHM enabled:
+
+```bash
+python -m ai_framework.inference.worker \
+    --socket-path /tmp/maars_infer.sock \
+    --checkpoint checkpoints/best_model.pt \
+    --scalers checkpoints/scalers.joblib \
+    --sample-rate-hz 25000000 \
+    --shm-name maars_iq_ring \
+    --shm-slots 8 \
+    --shm-slot-capacity 8192 \
+    --shm-create
+```
+
+Optional cleanup behavior:
+
+- Add `--shm-unlink-on-exit` if you want the worker to remove the SHM segment when it shuts down.
+
+Test client using SHM descriptor requests:
+
+```bash
+python -m ai_framework.cli.inference_socket_client \
+    --socket-path /tmp/maars_infer.sock \
+    --iq-npy input_iq.npy \
+    --power-lna-dbm -35.2 \
+    --power-pa-dbm -22.8 \
+    --sample-rate-hz 25000000 \
+    --use-shm \
+    --shm-name maars_iq_ring \
+    --shm-slots 8 \
+    --shm-slot-capacity 8192 \
+    --slot-index 0 \
+    --shm-create
+```
+
+For Rust integration, keep the ring buffer alive and reuse slots in a producer/consumer loop.
+
 ## Data Normalization
 
 **All data is automatically normalized** for optimal training:
@@ -149,6 +190,7 @@ ai_framework/
 │   ├── engine.py          # RFInferenceEngine (end-to-end inference runtime)
 │   ├── output.py          # Structured inference outputs
 │   ├── protocol.py        # Binary IPC protocol for persistent worker
+│   ├── shm_ring.py        # Shared-memory ring buffer helper
 │   └── worker.py          # Persistent Unix-socket inference worker
 ├── cli/
 │   ├── inference_cli.py   # JSON-capable inference CLI for external programs

@@ -16,6 +16,7 @@ MSG_PING_RESP = 4
 MSG_SHUTDOWN_REQ = 5
 MSG_SHUTDOWN_RESP = 6
 MSG_ERROR_RESP = 7
+MSG_INFER_SHM_REQ = 8
 
 STATUS_OK = 0
 STATUS_INVALID_NO_SIGNAL = 1
@@ -33,6 +34,9 @@ INFER_RESP_SIZE = struct.calcsize(INFER_RESP_FMT)
 
 PING_FMT = "<Q"
 PING_SIZE = struct.calcsize(PING_FMT)
+
+INFER_SHM_REQ_FMT = "<QdffII"
+INFER_SHM_REQ_SIZE = struct.calcsize(INFER_SHM_REQ_FMT)
 
 
 def _recv_exact(conn: socket.socket, size: int) -> bytes:
@@ -108,6 +112,43 @@ def unpack_infer_request(payload: bytes) -> Dict[str, object]:
         "power_lna_dbm": float(power_lna_dbm),
         "power_pa_dbm": float(power_pa_dbm),
         "iq_complex": iq_complex,
+    }
+
+
+def pack_infer_shm_request(
+    seq_id: int,
+    sample_rate_hz: float,
+    power_lna_dbm: float,
+    power_pa_dbm: float,
+    slot_index: int,
+    n_samples: int,
+) -> bytes:
+    return struct.pack(
+        INFER_SHM_REQ_FMT,
+        int(seq_id),
+        float(sample_rate_hz),
+        float(power_lna_dbm),
+        float(power_pa_dbm),
+        int(slot_index),
+        int(n_samples),
+    )
+
+
+def unpack_infer_shm_request(payload: bytes) -> Dict[str, object]:
+    if len(payload) != INFER_SHM_REQ_SIZE:
+        raise ValueError(
+            f"Infer SHM request payload size mismatch: got {len(payload)}, expected {INFER_SHM_REQ_SIZE}"
+        )
+    seq_id, sample_rate_hz, power_lna_dbm, power_pa_dbm, slot_index, n_samples = struct.unpack(
+        INFER_SHM_REQ_FMT, payload
+    )
+    return {
+        "seq_id": int(seq_id),
+        "sample_rate_hz": float(sample_rate_hz),
+        "power_lna_dbm": float(power_lna_dbm),
+        "power_pa_dbm": float(power_pa_dbm),
+        "slot_index": int(slot_index),
+        "n_samples": int(n_samples),
     }
 
 

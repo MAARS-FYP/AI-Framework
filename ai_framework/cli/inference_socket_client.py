@@ -11,18 +11,21 @@ import numpy as np
 from ai_framework.inference.protocol import (
     MSG_ERROR_RESP,
     MSG_INFER_REQ,
+    MSG_INFER_SHM_REQ,
     MSG_INFER_RESP,
     MSG_PING_REQ,
     MSG_PING_RESP,
     MSG_SHUTDOWN_REQ,
     MSG_SHUTDOWN_RESP,
     pack_infer_request,
+    pack_infer_shm_request,
     pack_ping,
     recv_message,
     send_message,
     unpack_error,
     unpack_infer_response,
 )
+from ai_framework.inference.shm_ring import SharedMemoryRingBuffer, SharedMemoryRingSpec
 
 
 def _load_iq(path: str) -> np.ndarray:
@@ -44,6 +47,13 @@ def main():
     parser.add_argument("--power-pa-dbm", type=float)
     parser.add_argument("--sample-rate-hz", type=float, default=0.0)
     parser.add_argument("--seq-id", type=int, default=1)
+    parser.add_argument("--use-shm", action="store_true")
+    parser.add_argument("--shm-name", default=None)
+    parser.add_argument("--shm-slots", type=int, default=8)
+    parser.add_argument("--shm-slot-capacity", type=int, default=8192)
+    parser.add_argument("--slot-index", type=int, default=0)
+    parser.add_argument("--shm-create", action="store_true")
+    parser.add_argument("--shm-unlink", action="store_true")
     args = parser.parse_args()
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
@@ -71,14 +81,41 @@ def main():
             raise ValueError("--power-lna-dbm and --power-pa-dbm are required for inference")
 
         iq = _load_iq(args.iq_npy)
-        req = pack_infer_request(
-            seq_id=args.seq_id,
-            sample_rate_hz=args.sample_rate_hz,
-            power_lna_dbm=args.power_lna_dbm,
-            power_pa_dbm=args.power_pa_dbm,
-            iq_complex=iq,
-        )
-        send_message(conn, MSG_INFER_REQ, req)
+        if args.use_shm:
+            if not args.shm_name:
+                raise ValueError("--shm-name is required with --use-shm")
+            shm = SharedMemoryRingBuffer(
+                spec=SharedMemoryRingSpec(
+                    name=args.shm_name,
+                    num_slots=args.shm_slots,
+                    slot_capacity=args.shm_slot_capacity,
+                ),
+                create=args.shm_create,
+            )
+            try:
+                n_samples = shm.write_slot(args.slot_index, iq)
+                req = pack_infer_shm_request(
+                    seq_id=args.seq_id,
+                    sample_rate_hz=args.sample_rate_hz,
+                    power_lna_dbm=args.power_lna_dbm,
+                    power_pa_dbm=args.power_pa_dbm,
+                    slot_index=args.slot_index,
+                    n_samples=n_samples,
+                )
+                send_message(conn, MSG_INFER_SHM_REQ, req)
+            finally:
+                shm.close()
+                if args.shm_unlink:
+                    shm.unlink()
+        else:
+            req = pack_infer_request(
+                seq_id=args.seq_id,
+                sample_rate_hz=args.sample_rate_hz,
+                power_lna_dbm=args.power_lna_dbm,
+                power_pa_dbm=args.power_pa_dbm,
+                iq_complex=iq,
+            )
+            send_message(conn, MSG_INFER_REQ, req)
 
         msg_type, payload = recv_message(conn)
         if msg_type == MSG_ERROR_RESP:

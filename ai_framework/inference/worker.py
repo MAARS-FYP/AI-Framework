@@ -11,6 +11,7 @@ from ai_framework.inference.engine import RFInferenceEngine
 from ai_framework.inference.protocol import (
     MSG_ERROR_RESP,
     MSG_INFER_REQ,
+    MSG_INFER_SHM_REQ,
     MSG_INFER_RESP,
     MSG_PING_REQ,
     MSG_PING_RESP,
@@ -25,8 +26,10 @@ from ai_framework.inference.protocol import (
     recv_message,
     send_message,
     unpack_infer_request,
+    unpack_infer_shm_request,
     unpack_ping,
 )
+from ai_framework.inference.shm_ring import SharedMemoryRingBuffer, SharedMemoryRingSpec
 
 
 def _status_code(status: str) -> int:
@@ -45,6 +48,11 @@ class InferenceSocketWorker:
         scalers_path: str,
         device: str = "auto",
         config: Optional[InferenceConfig] = None,
+        shm_name: Optional[str] = None,
+        shm_slots: int = 0,
+        shm_slot_capacity: int = 0,
+        shm_create: bool = False,
+        shm_unlink_on_exit: bool = False,
     ):
         self.socket_path = socket_path
         self.engine = RFInferenceEngine(
@@ -54,6 +62,13 @@ class InferenceSocketWorker:
             config=config or InferenceConfig(),
         )
         self._running = True
+        self.shm_ring: Optional[SharedMemoryRingBuffer] = None
+        self.shm_unlink_on_exit = shm_unlink_on_exit
+        if shm_name:
+            if shm_slots <= 0 or shm_slot_capacity <= 0:
+                raise ValueError("shm_slots and shm_slot_capacity must be > 0 when shm_name is provided")
+            spec = SharedMemoryRingSpec(name=shm_name, num_slots=shm_slots, slot_capacity=shm_slot_capacity)
+            self.shm_ring = SharedMemoryRingBuffer(spec=spec, create=shm_create)
 
     def run_forever(self):
         path = Path(self.socket_path)
@@ -72,9 +87,47 @@ class InferenceSocketWorker:
                 with conn:
                     self._handle_client(conn)
         finally:
+            if self.shm_ring is not None:
+                self.shm_ring.close()
+                if self.shm_unlink_on_exit:
+                    self.shm_ring.unlink()
             server.close()
             if path.exists():
                 path.unlink()
+
+    def _run_infer_request(self, req: dict) -> bytes:
+        sample_rate_hz = req["sample_rate_hz"] if req["sample_rate_hz"] > 0 else None
+        out = self.engine.infer_compact(
+            iq_samples=req["iq_complex"],
+            power_lna_dbm=req["power_lna_dbm"],
+            power_pa_dbm=req["power_pa_dbm"],
+            sample_rate_hz=sample_rate_hz,
+        )
+        return pack_infer_response(
+            seq_id=req["seq_id"],
+            status_code=_status_code(out["status"]),
+            lna_class=out["lna_class"],
+            filter_class=out["filter_class"],
+            center_class=out["center_class"],
+            mixer_dbm=out["mixer_dbm"],
+            ifamp_db=out["ifamp_db"],
+            evm_value=out["evm_value"],
+            processing_time_ms=out["processing_time_ms"],
+        )
+
+    def _run_infer_shm_request(self, req: dict) -> bytes:
+        if self.shm_ring is None:
+            raise ValueError("worker_shm_not_configured")
+
+        iq_complex = self.shm_ring.read_slot(req["slot_index"], req["n_samples"])
+        runtime_req = {
+            "seq_id": req["seq_id"],
+            "sample_rate_hz": req["sample_rate_hz"],
+            "power_lna_dbm": req["power_lna_dbm"],
+            "power_pa_dbm": req["power_pa_dbm"],
+            "iq_complex": iq_complex,
+        }
+        return self._run_infer_request(runtime_req)
 
     def _handle_client(self, conn: socket.socket):
         while self._running:
@@ -99,30 +152,17 @@ class InferenceSocketWorker:
                 send_message(conn, MSG_SHUTDOWN_RESP, b"")
                 return
 
-            if msg_type != MSG_INFER_REQ:
+            if msg_type not in (MSG_INFER_REQ, MSG_INFER_SHM_REQ):
                 send_message(conn, MSG_ERROR_RESP, pack_error(f"unknown_msg_type: {msg_type}"))
                 continue
 
             try:
-                req = unpack_infer_request(payload)
-                sample_rate_hz = req["sample_rate_hz"] if req["sample_rate_hz"] > 0 else None
-                out = self.engine.infer_compact(
-                    iq_samples=req["iq_complex"],
-                    power_lna_dbm=req["power_lna_dbm"],
-                    power_pa_dbm=req["power_pa_dbm"],
-                    sample_rate_hz=sample_rate_hz,
-                )
-                resp_payload = pack_infer_response(
-                    seq_id=req["seq_id"],
-                    status_code=_status_code(out["status"]),
-                    lna_class=out["lna_class"],
-                    filter_class=out["filter_class"],
-                    center_class=out["center_class"],
-                    mixer_dbm=out["mixer_dbm"],
-                    ifamp_db=out["ifamp_db"],
-                    evm_value=out["evm_value"],
-                    processing_time_ms=out["processing_time_ms"],
-                )
+                if msg_type == MSG_INFER_REQ:
+                    req = unpack_infer_request(payload)
+                    resp_payload = self._run_infer_request(req)
+                else:
+                    req = unpack_infer_shm_request(payload)
+                    resp_payload = self._run_infer_shm_request(req)
                 send_message(conn, MSG_INFER_RESP, resp_payload)
             except ValueError as exc:
                 send_message(conn, MSG_ERROR_RESP, pack_error(f"bad_request: {exc}"))
@@ -138,6 +178,11 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--sample-rate-hz", type=float, default=25e6)
     parser.add_argument("--allow-center-shift", action="store_true")
+    parser.add_argument("--shm-name", default=None)
+    parser.add_argument("--shm-slots", type=int, default=0)
+    parser.add_argument("--shm-slot-capacity", type=int, default=0)
+    parser.add_argument("--shm-create", action="store_true")
+    parser.add_argument("--shm-unlink-on-exit", action="store_true")
     args = parser.parse_args()
 
     cfg = InferenceConfig(sample_rate_hz=args.sample_rate_hz, allow_center_shift=args.allow_center_shift)
@@ -147,6 +192,11 @@ def main():
         scalers_path=args.scalers,
         device=args.device,
         config=cfg,
+        shm_name=args.shm_name,
+        shm_slots=args.shm_slots,
+        shm_slot_capacity=args.shm_slot_capacity,
+        shm_create=args.shm_create,
+        shm_unlink_on_exit=args.shm_unlink_on_exit,
     )
     worker.run_forever()
 
