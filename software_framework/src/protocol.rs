@@ -12,7 +12,7 @@ pub const MSG_ERROR_RESP: u8 = 7;
 pub const MSG_INFER_SHM_REQ: u8 = 8;
 
 const HEADER_SIZE: usize = 12;
-const INFER_RESP_SIZE: usize = 36;
+const INFER_RESP_SIZE: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct InferenceResponse {

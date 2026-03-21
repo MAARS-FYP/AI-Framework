@@ -138,3 +138,36 @@ fn open_shm_fd(name: &str) -> io::Result<RawFd> {
         format!("Unable to open shared memory segment: {}", name),
     ))
 }
+
+pub fn unlink_shm_by_name(name: &str) -> io::Result<()> {
+    let candidates = if name.starts_with('/') {
+        vec![name.to_string()]
+    } else {
+        vec![name.to_string(), format!("/{}", name)]
+    };
+
+    let mut last_err: Option<io::Error> = None;
+    for candidate in candidates {
+        let c_name = CString::new(candidate.clone()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Invalid SHM name: {}", candidate),
+            )
+        })?;
+
+        let rc = unsafe { libc::shm_unlink(c_name.as_ptr()) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::NotFound {
+            last_err = Some(err);
+        }
+    }
+
+    if let Some(err) = last_err {
+        Err(err)
+    } else {
+        Ok(())
+    }
+}

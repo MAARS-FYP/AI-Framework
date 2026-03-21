@@ -78,7 +78,14 @@ impl<T: Clone> CircularBuffer<T> {
 }
 
 pub fn receive_udp_data(buffer: Arc<Mutex<CircularBuffer<IQSample>>>) -> io::Result<()> {
-    let socket = UdpSocket::bind("127.0.0.1:5000")?;
+    receive_udp_data_with_bind("127.0.0.1:5000", buffer)
+}
+
+pub fn receive_udp_data_with_bind(
+    bind_addr: &str,
+    buffer: Arc<Mutex<CircularBuffer<IQSample>>>,
+) -> io::Result<()> {
+    let socket = UdpSocket::bind(bind_addr)?;
     let mut buf = [0; 2048];
 
     loop {
