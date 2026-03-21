@@ -2,3 +2,4 @@
 ai_framework/dataset/data
 __pycache__/
 *.pyc
+.env.example

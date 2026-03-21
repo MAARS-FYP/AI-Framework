@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${ROOT_DIR}/.env"
 
 MODE="hardware"
 IPC_MODE="shm"
@@ -45,6 +46,7 @@ Usage:
   ./run_full_system.sh [options] [-- <extra rust args>]
 
 Options:
+  --env-file <path>                  Load deployment variables from env file (default: ./.env if present)
   --mode <hardware|simulate>         Run full hardware loop or simulation mode
   --ipc-mode <direct|shm>            IPC mode for Rust + Python worker
   --socket-path <path>               Unix socket path (default: /tmp/maars_infer.sock)
@@ -81,9 +83,38 @@ Examples:
 EOF
 }
 
+load_env_file() {
+  local env_file="$1"
+  if [[ -f "${env_file}" ]]; then
+    echo "[launcher] loading env file: ${env_file}"
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+  fi
+}
+
+# First pass: allow --env-file to be set before loading variables.
+ARGS=("$@")
+idx=0
+while [[ ${idx} -lt ${#ARGS[@]} ]]; do
+  if [[ "${ARGS[$idx]}" == "--env-file" ]]; then
+    if (( idx + 1 >= ${#ARGS[@]} )); then
+      echo "Missing value for --env-file" >&2
+      exit 2
+    fi
+    ENV_FILE="${ARGS[$((idx + 1))]}"
+    break
+  fi
+  ((idx += 1))
+done
+
+load_env_file "${ENV_FILE}"
+
 EXTRA_RUST_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --env-file) ENV_FILE="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
     --ipc-mode) IPC_MODE="$2"; shift 2 ;;
     --socket-path) SOCKET_PATH="$2"; shift 2 ;;

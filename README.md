@@ -183,6 +183,20 @@ Simulation (no real UART/UDP hardware required):
 ./run_full_system.sh --mode simulate --ipc-mode shm --simulate-cycles 10
 ```
 
+You can keep deployment configuration in one file:
+
+```bash
+cp .env.example .env
+```
+
+The launcher auto-loads `.env` if present. You can also pass a specific env file:
+
+```bash
+./run_full_system.sh --env-file ./deploy.env --mode hardware
+```
+
+CLI arguments always override values from `.env`.
+
 What the launcher does:
 
 - Starts Python worker with configured socket/checkpoint/scalers and SHM parameters.
@@ -193,6 +207,7 @@ What the launcher does:
 Useful options:
 
 - `--mode hardware|simulate`
+- `--env-file ./deploy.env`
 - `--ipc-mode direct|shm`
 - `--socket-path /tmp/maars_infer.sock`
 - `--sample-rate-hz 25000000`
