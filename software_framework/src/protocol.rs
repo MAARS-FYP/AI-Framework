@@ -9,6 +9,7 @@ pub const MSG_INFER_RESP: u8 = 2;
 pub const MSG_PING_REQ: u8 = 3;
 pub const MSG_PING_RESP: u8 = 4;
 pub const MSG_ERROR_RESP: u8 = 7;
+pub const MSG_INFER_SHM_REQ: u8 = 8;
 
 const HEADER_SIZE: usize = 12;
 const INFER_RESP_SIZE: usize = 36;
@@ -33,6 +34,16 @@ pub struct InferenceRequest<'a> {
     pub power_lna_dbm: f32,
     pub power_pa_dbm: f32,
     pub iq_iq_pairs: &'a [(f32, f32)],
+}
+
+#[derive(Debug, Clone)]
+pub struct InferenceShmRequest {
+    pub seq_id: u64,
+    pub sample_rate_hz: f64,
+    pub power_lna_dbm: f32,
+    pub power_pa_dbm: f32,
+    pub slot_index: u32,
+    pub n_samples: u32,
 }
 
 fn read_exact_or_eof(stream: &mut UnixStream, size: usize) -> io::Result<Vec<u8>> {
@@ -131,6 +142,17 @@ pub fn unpack_infer_response(payload: &[u8]) -> io::Result<InferenceResponse> {
         evm_value,
         processing_time_ms,
     })
+}
+
+pub fn pack_infer_shm_request(req: &InferenceShmRequest) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(32);
+    payload.extend_from_slice(&req.seq_id.to_le_bytes());
+    payload.extend_from_slice(&req.sample_rate_hz.to_le_bytes());
+    payload.extend_from_slice(&req.power_lna_dbm.to_le_bytes());
+    payload.extend_from_slice(&req.power_pa_dbm.to_le_bytes());
+    payload.extend_from_slice(&req.slot_index.to_le_bytes());
+    payload.extend_from_slice(&req.n_samples.to_le_bytes());
+    payload
 }
 
 pub fn unpack_error(payload: &[u8]) -> io::Result<String> {

@@ -2,14 +2,29 @@ mod inference_client;
 mod protocol;
 mod receive_data;
 mod send_data;
+mod shm_ring;
 mod uart;
 
 use inference_client::InferenceSocketClient;
-use protocol::InferenceRequest;
+use protocol::{InferenceRequest, InferenceShmRequest};
 use receive_data::{CircularBuffer, IQSample, PowerMeasurement};
+use shm_ring::{SharedMemoryRingBuffer, SharedMemoryRingSpec};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use uart::UartConfig;
+
+#[derive(Clone, Copy)]
+enum IpcMode {
+    Direct,
+    Shm,
+}
+
+fn parse_ipc_mode() -> IpcMode {
+    match std::env::var("MAARS_IPC_MODE") {
+        Ok(v) if v.eq_ignore_ascii_case("shm") => IpcMode::Shm,
+        _ => IpcMode::Direct,
+    }
+}
 
 fn main() {
     let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<IQSample>::new(1024)));
@@ -54,8 +69,42 @@ fn main() {
         eprintln!("Inference worker not reachable at startup: {}", e);
     }
 
+    let ipc_mode = parse_ipc_mode();
+    let mut shm_ring = match ipc_mode {
+        IpcMode::Direct => None,
+        IpcMode::Shm => {
+            let shm_name =
+                std::env::var("MAARS_SHM_NAME").unwrap_or_else(|_| "maars_iq_ring".to_string());
+            let shm_slots = std::env::var("MAARS_SHM_SLOTS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(8);
+            let shm_slot_capacity = std::env::var("MAARS_SHM_SLOT_CAPACITY")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(8192);
+
+            let spec = SharedMemoryRingSpec {
+                name: shm_name,
+                num_slots: shm_slots,
+                slot_capacity: shm_slot_capacity,
+            };
+            match SharedMemoryRingBuffer::attach(spec) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    eprintln!(
+                        "Failed to attach SHM ring; falling back to direct IPC: {}",
+                        e
+                    );
+                    None
+                }
+            }
+        }
+    };
+
     let mut latest_power: Option<PowerMeasurement> = None;
     let mut seq_id: u64 = 1;
+    let mut slot_index: usize = 0;
 
     // Main processing loop
     loop {
@@ -94,15 +143,46 @@ fn main() {
                 }
             };
 
-            let request = InferenceRequest {
-                seq_id,
-                sample_rate_hz: 25_000_000.0,
-                power_lna_dbm: power.sensor1,
-                power_pa_dbm: power.sensor2,
-                iq_iq_pairs: &iq_iq_pairs,
+            let infer_result = if let Some(ring) = shm_ring.as_mut() {
+                let n_samples = match ring.write_slot(slot_index, &iq_iq_pairs) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("SHM write failed, skipping cycle: {}", e);
+                        thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
+                };
+
+                let shm_req = InferenceShmRequest {
+                    seq_id,
+                    sample_rate_hz: 25_000_000.0,
+                    power_lna_dbm: power.sensor1,
+                    power_pa_dbm: power.sensor2,
+                    slot_index: slot_index as u32,
+                    n_samples: n_samples as u32,
+                };
+
+                if let IpcMode::Shm = ipc_mode {
+                    slot_index = if ring.num_slots() > 0 {
+                        (slot_index + 1) % ring.num_slots()
+                    } else {
+                        0
+                    };
+                }
+
+                inference_client.infer_shm(&shm_req)
+            } else {
+                let request = InferenceRequest {
+                    seq_id,
+                    sample_rate_hz: 25_000_000.0,
+                    power_lna_dbm: power.sensor1,
+                    power_pa_dbm: power.sensor2,
+                    iq_iq_pairs: &iq_iq_pairs,
+                };
+                inference_client.infer(&request)
             };
 
-            match inference_client.infer(&request) {
+            match infer_result {
                 Ok(resp) => {
                     let uart_msg = format!(
                         "SEQ={} STATUS={} LNA={} FILTER={} CENTER={} MIXER_DBM={:.3} IFAMP_DB={:.3} EVM={:.3} PT_MS={:.3}\n",

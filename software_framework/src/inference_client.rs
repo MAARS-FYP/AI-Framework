@@ -2,9 +2,10 @@ use std::io;
 use std::os::unix::net::UnixStream;
 
 use crate::protocol::{
-    InferenceRequest, InferenceResponse, MSG_ERROR_RESP, MSG_INFER_REQ, MSG_INFER_RESP,
-    MSG_PING_REQ, MSG_PING_RESP, pack_infer_request, pack_ping, recv_message, send_message,
-    unpack_error, unpack_infer_response, unpack_ping,
+    InferenceRequest, InferenceResponse, InferenceShmRequest, MSG_ERROR_RESP, MSG_INFER_REQ,
+    MSG_INFER_RESP, MSG_INFER_SHM_REQ, MSG_PING_REQ, MSG_PING_RESP, pack_infer_request,
+    pack_infer_shm_request, pack_ping, recv_message, send_message, unpack_error,
+    unpack_infer_response, unpack_ping,
 };
 
 pub struct InferenceSocketClient {
@@ -62,6 +63,41 @@ impl InferenceSocketClient {
         let payload = pack_infer_request(req);
 
         if let Err(err) = send_message(stream, MSG_INFER_REQ, &payload) {
+            self.stream = None;
+            return Err(err);
+        }
+
+        let (msg_type, resp_payload) = match recv_message(stream) {
+            Ok(v) => v,
+            Err(err) => {
+                self.stream = None;
+                return Err(err);
+            }
+        };
+
+        match msg_type {
+            MSG_INFER_RESP => unpack_infer_response(&resp_payload),
+            MSG_ERROR_RESP => {
+                let msg = unpack_error(&resp_payload)?;
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Worker error: {}", msg),
+                ))
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unexpected message type: {}", other),
+            )),
+        }
+    }
+
+    pub fn infer_shm(&mut self, req: &InferenceShmRequest) -> io::Result<InferenceResponse> {
+        self.ensure_connected()?;
+
+        let stream = self.stream.as_mut().unwrap();
+        let payload = pack_infer_shm_request(req);
+
+        if let Err(err) = send_message(stream, MSG_INFER_SHM_REQ, &payload) {
             self.stream = None;
             return Err(err);
         }
