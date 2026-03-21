@@ -379,7 +379,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
                 continue;
             };
 
-            let iq_iq_pairs = match iq_sample.parse_qi_i16_be_to_iq_f32() {
+            let iq_iq_pairs = match iq_sample.parse_packed_iq_i16_to_iq_f32() {
                 Ok(v) if !v.is_empty() => v,
                 Ok(_) => {
                     eprintln!("Skipping inference: empty IQ payload");

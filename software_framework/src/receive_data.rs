@@ -11,18 +11,19 @@ pub struct IQSample {
 }
 
 impl IQSample {
-    pub fn parse_qi_i16_be_to_iq_f32(&self) -> io::Result<Vec<(f32, f32)>> {
+    pub fn parse_packed_iq_i16_to_iq_f32(&self) -> io::Result<Vec<(f32, f32)>> {
         if self.data.len() % 4 != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "IQ payload length must be divisible by 4 bytes (Q:int16, I:int16)",
+                "IQ payload length must be divisible by 4 bytes (packed u32 per sample)",
             ));
         }
 
         let mut out = Vec::with_capacity(self.data.len() / 4);
         for chunk in self.data.chunks_exact(4) {
-            let q = i16::from_be_bytes([chunk[0], chunk[1]]) as f32;
-            let i = i16::from_be_bytes([chunk[2], chunk[3]]) as f32;
+            let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let i = ((word & 0xFFFF) as u16) as i16 as f32;
+            let q = ((word >> 16) as u16) as i16 as f32;
             out.push((i, q));
         }
         Ok(out)
