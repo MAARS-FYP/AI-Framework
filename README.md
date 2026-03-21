@@ -169,6 +169,39 @@ python -m ai_framework.cli.inference_socket_client \
 
 For Rust integration, keep the ring buffer alive and reuse slots in a producer/consumer loop.
 
+### One-Command Deployment Launcher
+
+Use the root launcher script to start the full system in correct order (Python worker first, then Rust app) with matching IPC/SHM settings:
+
+```bash
+./run_full_system.sh --mode hardware --ipc-mode shm
+```
+
+Simulation (no real UART/UDP hardware required):
+
+```bash
+./run_full_system.sh --mode simulate --ipc-mode shm --simulate-cycles 10
+```
+
+What the launcher does:
+
+- Starts Python worker with configured socket/checkpoint/scalers and SHM parameters.
+- Waits for Unix socket readiness.
+- Starts Rust with matching `--ipc-mode`, socket path, sample-rate, and SHM args.
+- Handles graceful shutdown and socket cleanup on exit/signals.
+
+Useful options:
+
+- `--mode hardware|simulate`
+- `--ipc-mode direct|shm`
+- `--socket-path /tmp/maars_infer.sock`
+- `--sample-rate-hz 25000000`
+- `--shm-name maars_iq_ring --shm-slots 8 --shm-slot-capacity 8192`
+- `--worker-no-unlink-on-exit` (if you do not want worker SHM cleanup)
+- `--rust-cleanup-shm-on-exit` (Rust-side explicit SHM cleanup)
+
+Tip: Use only one SHM cleanup owner to avoid duplicate cleanup warnings. Default launcher behavior uses Python worker cleanup (`--shm-unlink-on-exit`).
+
 ## Data Normalization
 
 **All data is automatically normalized** for optimal training:
