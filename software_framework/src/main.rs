@@ -1,10 +1,14 @@
+mod inference_client;
+mod protocol;
 mod receive_data;
 mod send_data;
 mod uart;
 
+use inference_client::InferenceSocketClient;
+use protocol::InferenceRequest;
+use receive_data::{CircularBuffer, IQSample, PowerMeasurement};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use receive_data::{CircularBuffer, IQSample, PowerMeasurement};
 use uart::UartConfig;
 
 fn main() {
@@ -45,19 +49,89 @@ fn main() {
     // Example: send data via the channel from anywhere
     // uart_tx.send(vec![0x01, 0x02, 0x03]).unwrap();
 
+    let mut inference_client = InferenceSocketClient::new("/tmp/maars_infer.sock");
+    if let Err(e) = inference_client.connect() {
+        eprintln!("Inference worker not reachable at startup: {}", e);
+    }
+
+    let mut latest_power: Option<PowerMeasurement> = None;
+    let mut seq_id: u64 = 1;
+
     // Main processing loop
     loop {
-        if let Some(iq_sample) = udp_buffer.lock().unwrap().read() {
-            println!("IQ Sample - Timestamp: {}, Data len: {}", 
-                     iq_sample.timestamp, iq_sample.data.len());
+        if let Some(power) = uart_buffer.lock().unwrap().read() {
+            println!(
+                "Power - Timestamp: {}, Sensor1: {}, Sensor2: {}",
+                power.timestamp, power.sensor1, power.sensor2
+            );
+            latest_power = Some(power);
         }
 
-        if let Some(power) = uart_buffer.lock().unwrap().read() {
-            println!("Power - Timestamp: {}, Sensor1: {}, Sensor2: {}", 
-                     power.timestamp, power.sensor1, power.sensor2);
+        if let Some(iq_sample) = udp_buffer.lock().unwrap().read() {
+            println!(
+                "IQ Sample - Timestamp: {}, Data len: {}",
+                iq_sample.timestamp,
+                iq_sample.data.len()
+            );
+
+            let Some(power) = latest_power.clone() else {
+                eprintln!("Skipping inference: no power sample received yet");
+                thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            };
+
+            let iq_iq_pairs = match iq_sample.parse_qi_i16_be_to_iq_f32() {
+                Ok(v) if !v.is_empty() => v,
+                Ok(_) => {
+                    eprintln!("Skipping inference: empty IQ payload");
+                    thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("Skipping inference: bad IQ payload: {}", e);
+                    thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+            };
+
+            let request = InferenceRequest {
+                seq_id,
+                sample_rate_hz: 25_000_000.0,
+                power_lna_dbm: power.sensor1,
+                power_pa_dbm: power.sensor2,
+                iq_iq_pairs: &iq_iq_pairs,
+            };
+
+            match inference_client.infer(&request) {
+                Ok(resp) => {
+                    let uart_msg = format!(
+                        "SEQ={} STATUS={} LNA={} FILTER={} CENTER={} MIXER_DBM={:.3} IFAMP_DB={:.3} EVM={:.3} PT_MS={:.3}\n",
+                        resp.seq_id,
+                        resp.status_code,
+                        resp.lna_class,
+                        resp.filter_class,
+                        resp.center_class,
+                        resp.mixer_dbm,
+                        resp.ifamp_db,
+                        resp.evm_value,
+                        resp.processing_time_ms
+                    );
+
+                    if let Err(e) = uart_tx.send(uart_msg.into_bytes()) {
+                        eprintln!("UART command send failed: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Inference request failed: {}", e);
+                    if let Err(connect_err) = inference_client.connect() {
+                        eprintln!("Inference reconnect failed: {}", connect_err);
+                    }
+                }
+            }
+
+            seq_id += 1;
         }
 
         thread::sleep(std::time::Duration::from_millis(10));
     }
 }
-

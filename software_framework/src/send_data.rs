@@ -1,6 +1,6 @@
+use crate::uart::Uart;
 use std::io::{self, Write};
 use std::sync::mpsc::Receiver;
-use crate::uart::Uart;
 
 /// Sends data received from the channel over UART.
 /// Feed data from any thread/function via the corresponding Sender<Vec<u8>>.
