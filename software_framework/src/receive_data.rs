@@ -6,27 +6,50 @@ use std::sync::{Arc, Mutex};
 // Data structures for parsed data
 #[derive(Clone, Debug)]
 pub struct IQSample {
-    pub timestamp: u64,
     pub data: Vec<u8>,
 }
 
 impl IQSample {
-    pub fn parse_packed_iq_i16_to_iq_f32(&self) -> io::Result<Vec<(f32, f32)>> {
+    /// Parse Q,I interleaved i16 format: [Q0, I0, Q1, I1, ...]
+    /// Each value is a 2-byte little-endian signed integer
+    pub fn parse_qi_interleaved_i16_to_iq_f32(&self) -> io::Result<Vec<(f32, f32)>> {
         if self.data.len() % 4 != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "IQ payload length must be divisible by 4 bytes (packed u32 per sample)",
+                "IQ payload length must be divisible by 4 bytes (Q,I pair = 4 bytes)",
             ));
         }
 
         let mut out = Vec::with_capacity(self.data.len() / 4);
         for chunk in self.data.chunks_exact(4) {
-            let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            let i = ((word & 0xFFFF) as u16) as i16 as f32;
-            let q = ((word >> 16) as u16) as i16 as f32;
+            // Q is first 2 bytes, I is next 2 bytes, both as little-endian i16
+            let q_bytes = [chunk[0], chunk[1]];
+            let i_bytes = [chunk[2], chunk[3]];
+            let q = i16::from_le_bytes(q_bytes) as f32;
+            let i = i16::from_le_bytes(i_bytes) as f32;
             out.push((i, q));
         }
         Ok(out)
+    }
+
+    /// Display packet contents for debugging (show first few samples)
+    pub fn display_debug_info(&self, packet_num: usize) {
+        let num_samples = self.data.len() / 4;
+        eprintln!("=== UDP Packet #{} ===", packet_num);
+        eprintln!("Size: {} bytes ({} I/Q samples)", self.data.len(), num_samples);
+        
+        // Show first 5 samples
+        let show_count = std::cmp::min(5, num_samples);
+        eprintln!("First {} samples (Q, I):", show_count);
+        for i in 0..show_count {
+            let offset = i * 4;
+            let q_bytes = [self.data[offset], self.data[offset + 1]];
+            let i_bytes = [self.data[offset + 2], self.data[offset + 3]];
+            let q = i16::from_le_bytes(q_bytes);
+            let i = i16::from_le_bytes(i_bytes);
+            eprintln!("  Sample {}: Q={}, I={}", i, q, i);
+        }
+        eprintln!("");
     }
 }
 
@@ -79,7 +102,8 @@ impl<T: Clone> CircularBuffer<T> {
 }
 
 pub fn receive_udp_data(buffer: Arc<Mutex<CircularBuffer<IQSample>>>) -> io::Result<()> {
-    receive_udp_data_with_bind("127.0.0.1:5000", buffer)
+    // Try binding to all interfaces; can be overridden with --udp-bind
+    receive_udp_data_with_bind("172.25.122.155:62510", buffer)
 }
 
 pub fn receive_udp_data_with_bind(
@@ -87,20 +111,24 @@ pub fn receive_udp_data_with_bind(
     buffer: Arc<Mutex<CircularBuffer<IQSample>>>,
 ) -> io::Result<()> {
     let socket = UdpSocket::bind(bind_addr)?;
-    let mut buf = [0; 2048];
+    eprintln!("UDP socket bound to: {}", bind_addr);
+    let mut buf = [0; 1024];
+    let mut packet_count = 0u64;
 
     loop {
-        let (amt, _src) = socket.recv_from(&mut buf)?;
+        let (amt, src) = socket.recv_from(&mut buf)?;
+        packet_count += 1;
 
-        // Parse: assuming first 8 bytes are timestamp (u64), rest is I/Q data
-        // Adjust timestamp size as needed
-        if amt >= 8 {
-            let timestamp = u64::from_be_bytes(buf[0..8].try_into().unwrap());
-            let data = buf[8..amt].to_vec();
+        // All 1024 bytes are raw Q,I interleaved i16 data - no header
+        let data = buf[0..amt].to_vec();
 
-            let sample = IQSample { timestamp, data };
-            buffer.lock().unwrap().write(sample);
-        }
+        let sample = IQSample { data: data.clone() };
+        
+        // Display debug info
+        eprintln!("\n[Packet {}] Received {} bytes from {}", packet_count, amt, src);
+        sample.display_debug_info(packet_count as usize);
+        
+        buffer.lock().unwrap().write(sample);
     }
 }
 

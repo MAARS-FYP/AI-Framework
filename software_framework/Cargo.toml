@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2"
-serialport = "4.9.0"
+serialport = { version = "4.9.0", default-features = false }
