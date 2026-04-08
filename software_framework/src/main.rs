@@ -72,7 +72,7 @@ impl Default for AppConfig {
             dry_run_samples: 4096,
             dry_run_power_lna_dbm: -35.0,
             dry_run_power_pa_dbm: -22.0,
-            uart_port: "/dev/ttyACM0".to_string(),
+            uart_port: "/dev/cu.usbmodem1203".to_string(),
             uart_baud: 115200,
             udp_bind: "0.0.0.0:5001".to_string(),
             cleanup_shm_on_exit: false,
@@ -100,7 +100,7 @@ Options:\n\
   --dry-run-samples <int>            Synthetic IQ sample count per cycle (default: 4096)\n\
   --dry-run-power-lna <float>        Synthetic LNA power dBm (default: -35)\n\
   --dry-run-power-pa <float>         Synthetic PA power dBm (default: -22)\n\
-    --uart-port <path>                 UART port path (default: /dev/ttyACM0)\n\
+    --uart-port <path>                 UART port path (default: /dev/cu.usbmodem1203)\n\
   --uart-baud <int>                  UART baud (default: 115200)\n\
   --udp-bind <host:port>             UDP bind address for IQ input (default: 127.0.0.1:5000)\n\
     --cleanup-shm-on-exit              Explicitly unlink SHM segment at simulation/dry-run teardown\n\

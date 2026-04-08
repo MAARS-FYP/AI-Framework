@@ -257,6 +257,7 @@ fn is_ignorable_uart_frame(response: &[u8]) -> bool {
     trimmed.is_empty()
         || trimmed == ">"
         || trimmed.eq_ignore_ascii_case("ok")
+    || trimmed.eq_ignore_ascii_case("adc read")
         || trimmed.eq_ignore_ascii_case("adc read b")
 }
 
@@ -289,11 +290,26 @@ fn parse_adc_payload(response: &[u8]) -> Option<u32> {
         .copied()
         .filter(|b| *b != b'\r' && *b != b'\n')
         .collect();
-    if binary.len() >= 3 {
+
+    // Prefer strict 3-byte binary payloads; avoid interpreting echoed ASCII as ADC bytes.
+    if binary.len() == 3 {
+        let v = ((binary[0] as u32) << 16) | ((binary[1] as u32) << 8) | (binary[2] as u32);
+        return Some(v & 0x00FF_FFFF);
+    }
+
+    // Common shell/prompt shape: [B0 B1 B2 '>' ' '].
+    if binary.len() >= 5 && binary.ends_with(b"> ") {
         let n = binary.len();
-        let v = ((binary[n - 3] as u32) << 16)
-            | ((binary[n - 2] as u32) << 8)
-            | (binary[n - 1] as u32);
+        let v = ((binary[n - 5] as u32) << 16)
+            | ((binary[n - 4] as u32) << 8)
+            | (binary[n - 3] as u32);
+        return Some(v & 0x00FF_FFFF);
+    }
+
+    // If the frame includes non-ASCII bytes, treat the first three bytes as payload.
+    let has_non_ascii = binary.iter().any(|b| !b.is_ascii());
+    if has_non_ascii && binary.len() >= 3 {
+        let v = ((binary[0] as u32) << 16) | ((binary[1] as u32) << 8) | (binary[2] as u32);
         return Some(v & 0x00FF_FFFF);
     }
 
