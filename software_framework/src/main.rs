@@ -15,6 +15,22 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use uart::UartConfig;
 
+const DEFAULT_ENABLE_UART_PATH: bool = true;
+const DEFAULT_ENABLE_UDP_PATH: bool = true;
+const DEFAULT_UART_USE_SYNTHETIC: bool = false;
+const DEFAULT_UDP_USE_SYNTHETIC: bool = true;
+const DEFAULT_ENABLE_INFERENCE: bool = true;
+const DEFAULT_PRINT_INFERENCE_RESULTS: bool = true;
+const DEFAULT_PRINT_UART_INPUT: bool = false;
+const DEFAULT_PRINT_UDP_INPUT: bool = false;
+const ADC_MAX_U12: f32 = 4095.0;
+const ADC_VREF_VOLTS: f32 = 3.3;
+const SENSOR_MIN_VOLTS: f32 = 0.2;
+const SENSOR_MAX_VOLTS: f32 = 1.7;
+const SENSOR_MIN_DBM: f32 = -30.0;
+const SENSOR_MAX_DBM: f32 = 15.0;
+const SENSOR_DBM_BIAS: f32 = 10.0;
+
 #[derive(Clone, Copy)]
 enum IpcMode {
     Direct,
@@ -40,6 +56,14 @@ struct AppConfig {
     uart_port: String,
     uart_baud: u32,
     udp_bind: String,
+    enable_uart_path: bool,
+    enable_udp_path: bool,
+    uart_use_synthetic: bool,
+    udp_use_synthetic: bool,
+    enable_inference: bool,
+    print_inference_results: bool,
+    print_uart_input: bool,
+    print_udp_input: bool,
     cleanup_shm_on_exit: bool,
 }
 
@@ -75,6 +99,14 @@ impl Default for AppConfig {
             uart_port: "/dev/cu.usbmodem1203".to_string(),
             uart_baud: 115200,
             udp_bind: "0.0.0.0:5001".to_string(),
+            enable_uart_path: DEFAULT_ENABLE_UART_PATH,
+            enable_udp_path: DEFAULT_ENABLE_UDP_PATH,
+            uart_use_synthetic: DEFAULT_UART_USE_SYNTHETIC,
+            udp_use_synthetic: DEFAULT_UDP_USE_SYNTHETIC,
+            enable_inference: DEFAULT_ENABLE_INFERENCE,
+            print_inference_results: DEFAULT_PRINT_INFERENCE_RESULTS,
+            print_uart_input: DEFAULT_PRINT_UART_INPUT,
+            print_udp_input: DEFAULT_PRINT_UDP_INPUT,
             cleanup_shm_on_exit: false,
         }
     }
@@ -103,6 +135,22 @@ Options:\n\
     --uart-port <path>                 UART port path (default: /dev/cu.usbmodem1203)\n\
   --uart-baud <int>                  UART baud (default: 115200)\n\
   --udp-bind <host:port>             UDP bind address for IQ input (default: 127.0.0.1:5000)\n\
+    --enable-uart-path                 Enable UART input path (default: on)\n\
+    --disable-uart-path                Disable UART input path\n\
+    --uart-use-synthetic               Force synthetic UART power input\n\
+    --uart-use-real                    Force real UART power input\n\
+    --enable-udp-path                  Enable UDP input path (default: on)\n\
+    --disable-udp-path                 Disable UDP input path\n\
+    --udp-use-synthetic                Force synthetic UDP IQ input\n\
+    --udp-use-real                     Force real UDP IQ input\n\
+    --enable-inference                 Enable Python inference path (default: on)\n\
+    --disable-inference                Disable Python inference path\n\
+    --print-inference-results          Print inference summaries (default: on)\n\
+    --no-print-inference-results       Disable inference summaries\n\
+    --print-uart-input                 Print UART input data\n\
+    --no-print-uart-input              Disable UART input data printing\n\
+    --print-udp-input                  Print UDP packet debug output\n\
+    --no-print-udp-input               Disable UDP packet debug output\n\
     --cleanup-shm-on-exit              Explicitly unlink SHM segment at simulation/dry-run teardown\n\
   --help                             Show this help\n"
     );
@@ -243,6 +291,54 @@ fn parse_args() -> Result<AppConfig, String> {
                     .ok_or("Missing value for --udp-bind")?
                     .to_string();
             }
+            "--enable-uart-path" => {
+                cfg.enable_uart_path = true;
+            }
+            "--disable-uart-path" => {
+                cfg.enable_uart_path = false;
+            }
+            "--uart-use-synthetic" => {
+                cfg.uart_use_synthetic = true;
+            }
+            "--uart-use-real" => {
+                cfg.uart_use_synthetic = false;
+            }
+            "--enable-udp-path" => {
+                cfg.enable_udp_path = true;
+            }
+            "--disable-udp-path" => {
+                cfg.enable_udp_path = false;
+            }
+            "--udp-use-synthetic" => {
+                cfg.udp_use_synthetic = true;
+            }
+            "--udp-use-real" => {
+                cfg.udp_use_synthetic = false;
+            }
+            "--enable-inference" => {
+                cfg.enable_inference = true;
+            }
+            "--disable-inference" => {
+                cfg.enable_inference = false;
+            }
+            "--print-inference-results" => {
+                cfg.print_inference_results = true;
+            }
+            "--no-print-inference-results" => {
+                cfg.print_inference_results = false;
+            }
+            "--print-uart-input" => {
+                cfg.print_uart_input = true;
+            }
+            "--no-print-uart-input" => {
+                cfg.print_uart_input = false;
+            }
+            "--print-udp-input" => {
+                cfg.print_udp_input = true;
+            }
+            "--no-print-udp-input" => {
+                cfg.print_udp_input = false;
+            }
             "--cleanup-shm-on-exit" => {
                 cfg.cleanup_shm_on_exit = true;
             }
@@ -287,31 +383,116 @@ fn main() {
 }
 
 fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
-    let uart_buffer = Arc::new(Mutex::new(CircularBuffer::<PowerMeasurement>::new(1024)));
+    let mut inference_client = if cfg.enable_inference {
+        let mut client = InferenceSocketClient::new(&cfg.socket_path);
+        client.connect()?;
+        Some(client)
+    } else {
+        None
+    };
 
-    let uart_config = UartConfig::new(&cfg.uart_port, cfg.uart_baud);
-    let uart = uart::Uart::open(&uart_config)?;
+    let mut shm_ring = if cfg.enable_inference {
+        if let IpcMode::Shm = cfg.ipc_mode {
+            Some(SharedMemoryRingBuffer::attach(SharedMemoryRingSpec {
+                name: cfg.shm_name.clone(),
+                num_slots: cfg.shm_slots,
+                slot_capacity: cfg.shm_slot_capacity,
+            })?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let uart_buffer = Arc::new(Mutex::new(CircularBuffer::<PowerMeasurement>::new(1024)));
+    let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
+
+    let mut uart_reader_started = false;
+    if cfg.enable_uart_path && !cfg.uart_use_synthetic {
+        let uart_config = UartConfig::new(&cfg.uart_port, cfg.uart_baud);
+        let uart = uart::Uart::open(&uart_config)?;
+        let uart_buf_clone = Arc::clone(&uart_buffer);
+        let print_uart_input = cfg.print_uart_input;
+        thread::spawn(move || {
+            if let Err(e) = receive_data::receive_uart_adc_measurements(uart, uart_buf_clone, print_uart_input) {
+                eprintln!("UART receiver error: {}", e);
+            }
+        });
+        uart_reader_started = true;
+    }
+
+    let mut udp_reader_started = false;
+    if cfg.enable_udp_path && !cfg.udp_use_synthetic {
+        let udp_buf_clone = Arc::clone(&udp_buffer);
+        let bind_addr = cfg.udp_bind.clone();
+        let print_udp_input = cfg.print_udp_input;
+        thread::spawn(move || {
+            if let Err(e) = receive_data::receive_udp_data_with_bind(&bind_addr, udp_buf_clone, print_udp_input) {
+                eprintln!("UDP receiver error: {}", e);
+            }
+        });
+        udp_reader_started = true;
+    }
 
     println!(
-        "UART power-sensor mode active on {} @ {} baud (UDP disabled)",
-        cfg.uart_port, cfg.uart_baud
+        "HW mode active: uart={} ({}) udp={} ({}) inference={} infer_print={} uart_print={} udp_print={} ipc={}",
+        if cfg.enable_uart_path { "on" } else { "off" },
+        if cfg.uart_use_synthetic || !uart_reader_started { "synthetic" } else { "real" },
+        if cfg.enable_udp_path { "on" } else { "off" },
+        if cfg.udp_use_synthetic || !udp_reader_started { "synthetic" } else { "real" },
+        if cfg.enable_inference { "on" } else { "off" },
+        if cfg.print_inference_results { "on" } else { "off" },
+        if cfg.print_uart_input { "on" } else { "off" },
+        if cfg.print_udp_input { "on" } else { "off" },
+        match cfg.ipc_mode {
+            IpcMode::Direct => "direct",
+            IpcMode::Shm => "shm",
+        },
     );
 
-    let uart_buf_clone = Arc::clone(&uart_buffer);
-    let _uart_read_thread = thread::spawn(move || {
-        if let Err(e) = receive_data::receive_uart_adc_measurements(uart, uart_buf_clone) {
-            eprintln!("UART receiver error: {}", e);
-        }
-    });
+    let mut slot_index = 0usize;
+    let mut cycle: u64 = 0;
 
     loop {
-        if let Some(power) = uart_buffer.lock().unwrap().read() {
-            println!(
-                "Power sensors - value1: 0x{:03X} value2: 0x{:03X}",
-                power.power_lna_raw as u16,
-                power.power_pa_raw as u16
-            );
+        cycle += 1;
+
+        let power_raw = acquire_power_sample(cfg, &uart_buffer, cycle);
+        let power_lna_dbm = calibrate_power_raw_to_dbm(power_raw.power_lna_raw);
+        let power_pa_dbm = calibrate_power_raw_to_dbm(power_raw.power_pa_raw);
+
+        let iq_iq_pairs = acquire_iq_samples(cfg, &udp_buffer, cycle);
+
+        if cfg.enable_inference {
+            let resp = infer_once(
+                cfg,
+                inference_client.as_mut().unwrap(),
+                &mut shm_ring,
+                &mut slot_index,
+                cycle,
+                &iq_iq_pairs,
+                power_lna_dbm,
+                power_pa_dbm,
+            )?;
+
+            if cfg.print_inference_results {
+                println!(
+                    "HW seq={} status={} lna={} filter={} center={} mixer_dbm={:.3} ifamp_db={:.3} evm={:.3} pt_ms={:.3} power_lna_dbm={:.3} power_pa_dbm={:.3}",
+                    resp.seq_id,
+                    resp.status_code,
+                    resp.lna_class,
+                    resp.filter_class,
+                    resp.center_class,
+                    resp.mixer_dbm,
+                    resp.ifamp_db,
+                    resp.evm_value,
+                    resp.processing_time_ms,
+                    power_lna_dbm,
+                    power_pa_dbm,
+                );
+            }
         }
+
         thread::sleep(std::time::Duration::from_millis(10));
     }
 }
@@ -508,4 +689,62 @@ fn generate_synthetic_iq(n_samples: usize, phase_offset: f32) -> Vec<(f32, f32)>
         out.push((i, q));
     }
     out
+}
+
+fn generate_synthetic_power_raw(cycle: u64) -> PowerMeasurement {
+    let phase = cycle as f32 * 0.11;
+    let lna = ((phase.sin() * 0.5 + 0.5) * ADC_MAX_U12).round().clamp(0.0, ADC_MAX_U12);
+    let pa = ((phase.cos() * 0.5 + 0.5) * ADC_MAX_U12).round().clamp(0.0, ADC_MAX_U12);
+    PowerMeasurement {
+        power_lna_raw: lna,
+        power_pa_raw: pa,
+    }
+}
+
+fn acquire_power_sample(
+    cfg: &AppConfig,
+    uart_buffer: &Arc<Mutex<CircularBuffer<PowerMeasurement>>>,
+    cycle: u64,
+) -> PowerMeasurement {
+    if !cfg.enable_uart_path || cfg.uart_use_synthetic {
+        return generate_synthetic_power_raw(cycle);
+    }
+
+    if let Some(power) = uart_buffer.lock().unwrap().read() {
+        return power;
+    }
+
+    generate_synthetic_power_raw(cycle)
+}
+
+fn acquire_iq_samples(
+    cfg: &AppConfig,
+    udp_buffer: &Arc<Mutex<CircularBuffer<receive_data::IQSample>>>,
+    cycle: u64,
+) -> Vec<(f32, f32)> {
+    if !cfg.enable_udp_path || cfg.udp_use_synthetic {
+        return generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1);
+    }
+
+    if let Some(sample) = udp_buffer.lock().unwrap().read() {
+        if let Ok(parsed) = sample.parse_qi_interleaved_i16_to_iq_f32() {
+            return parsed;
+        }
+    }
+
+    generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1)
+}
+
+fn calibrate_power_raw_to_dbm(raw_u12: f32) -> f32 {
+    let raw = raw_u12.clamp(0.0, ADC_MAX_U12);
+    let voltage = (raw / ADC_MAX_U12) * ADC_VREF_VOLTS;
+    let clamped_voltage = voltage.clamp(SENSOR_MIN_VOLTS, SENSOR_MAX_VOLTS);
+    let span = SENSOR_MAX_VOLTS - SENSOR_MIN_VOLTS;
+    let ratio = if span > 0.0 {
+        (clamped_voltage - SENSOR_MIN_VOLTS) / span
+    } else {
+        0.0
+    };
+    let dbm = SENSOR_MIN_DBM + ratio * (SENSOR_MAX_DBM - SENSOR_MIN_DBM);
+    dbm + SENSOR_DBM_BIAS
 }

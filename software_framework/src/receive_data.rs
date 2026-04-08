@@ -103,12 +103,13 @@ impl<T: Clone> CircularBuffer<T> {
 
 pub fn receive_udp_data(buffer: Arc<Mutex<CircularBuffer<IQSample>>>) -> io::Result<()> {
     // Try binding to all interfaces; can be overridden with --udp-bind
-    receive_udp_data_with_bind("172.25.122.155:62510", buffer)
+    receive_udp_data_with_bind("172.25.122.155:62510", buffer, false)
 }
 
 pub fn receive_udp_data_with_bind(
     bind_addr: &str,
     buffer: Arc<Mutex<CircularBuffer<IQSample>>>,
+    print_udp_input: bool,
 ) -> io::Result<()> {
     let socket = UdpSocket::bind(bind_addr)?;
     eprintln!("UDP socket bound to: {}", bind_addr);
@@ -124,9 +125,10 @@ pub fn receive_udp_data_with_bind(
 
         let sample = IQSample { data: data.clone() };
         
-        // Display debug info
-        eprintln!("\n[Packet {}] Received {} bytes from {}", packet_count, amt, src);
-        sample.display_debug_info(packet_count as usize);
+        if print_udp_input {
+            eprintln!("\n[Packet {}] Received {} bytes from {}", packet_count, amt, src);
+            sample.display_debug_info(packet_count as usize);
+        }
         
         buffer.lock().unwrap().write(sample);
     }
@@ -158,6 +160,7 @@ pub fn receive_uart_data(
 pub fn receive_uart_adc_measurements(
     mut uart: Uart,
     buffer: Arc<Mutex<CircularBuffer<PowerMeasurement>>>,
+    print_uart_input: bool,
 ) -> io::Result<()> {
     const ADC_CMD: &[u8] = b"adc read\r\n";
 
@@ -182,6 +185,15 @@ pub fn receive_uart_adc_measurements(
             power_lna_raw: power_lna_raw as f32,
             power_pa_raw: power_pa_raw as f32,
         });
+
+        if print_uart_input {
+            eprintln!(
+                "UART ADC raw: lna={} pa={} (packed=0x{:06X})",
+                power_lna_raw,
+                power_pa_raw,
+                raw_24 & 0x00FF_FFFF
+            );
+        }
 
         std::thread::sleep(Duration::from_millis(20));
     }
