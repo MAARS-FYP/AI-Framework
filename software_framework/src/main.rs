@@ -18,7 +18,7 @@ use uart::UartConfig;
 const DEFAULT_ENABLE_UART_PATH: bool = true;
 const DEFAULT_ENABLE_UDP_PATH: bool = true;
 const DEFAULT_UART_USE_SYNTHETIC: bool = false;
-const DEFAULT_UDP_USE_SYNTHETIC: bool = true;
+const DEFAULT_UDP_USE_SYNTHETIC: bool = false;
 const DEFAULT_ENABLE_INFERENCE: bool = true;
 const DEFAULT_PRINT_INFERENCE_RESULTS: bool = true;
 const DEFAULT_PRINT_UART_INPUT: bool = false;
@@ -96,7 +96,7 @@ impl Default for AppConfig {
             dry_run_samples: 4096,
             dry_run_power_lna_dbm: -35.0,
             dry_run_power_pa_dbm: -22.0,
-            uart_port: "/dev/cu.usbmodem1203".to_string(),
+            uart_port: "/dev/cu.usbmodem11203".to_string(),
             uart_baud: 115200,
             udp_bind: "0.0.0.0:5001".to_string(),
             enable_uart_path: DEFAULT_ENABLE_UART_PATH,
@@ -135,16 +135,16 @@ Options:\n\
     --uart-port <path>                 UART port path (default: /dev/cu.usbmodem1203)\n\
   --uart-baud <int>                  UART baud (default: 115200)\n\
   --udp-bind <host:port>             UDP bind address for IQ input (default: 127.0.0.1:5000)\n\
-    --enable-uart-path                 Enable UART input path (default: on)\n\
-    --disable-uart-path                Disable UART input path\n\
-    --uart-use-synthetic               Force synthetic UART power input\n\
-    --uart-use-real                    Force real UART power input\n\
-    --enable-udp-path                  Enable UDP input path (default: on)\n\
-    --disable-udp-path                 Disable UDP input path\n\
-    --udp-use-synthetic                Force synthetic UDP IQ input\n\
-    --udp-use-real                     Force real UDP IQ input\n\
-    --enable-inference                 Enable Python inference path (default: on)\n\
-    --disable-inference                Disable Python inference path\n\
+        --enable-uart-path                 Enable UART input path (default: on)\n\
+        --disable-uart-path                Disable UART input path\n\
+        --uart-use-synthetic               Use synthetic UART input when inference is enabled\n\
+        --uart-use-real                    Use real UART hardware input\n\
+        --enable-udp-path                  Enable UDP input path (default: on)\n\
+        --disable-udp-path                 Disable UDP input path\n\
+        --udp-use-synthetic                Use synthetic UDP input when inference is enabled\n\
+        --udp-use-real                     Use real UDP hardware input\n\
+        --enable-inference                 Enable Python inference path (requires UART + UDP)\n\
+        --disable-inference                Disable inference and run one displayed hardware path\n\
     --print-inference-results          Print inference summaries (default: on)\n\
     --no-print-inference-results       Disable inference summaries\n\
     --print-uart-input                 Print UART input data\n\
@@ -350,6 +350,57 @@ fn parse_args() -> Result<AppConfig, String> {
     Ok(cfg)
 }
 
+fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
+    if cfg.dry_run || cfg.simulate {
+        return Ok(());
+    }
+
+    if cfg.enable_inference {
+        if !cfg.enable_uart_path || !cfg.enable_udp_path {
+            return Err(
+                "Inference mode requires both --enable-uart-path and --enable-udp-path. Use --uart-use-synthetic and/or --udp-use-synthetic only when a path is not real hardware.".to_string(),
+            );
+        }
+
+        return Ok(());
+    }
+
+    let enabled_paths = u8::from(cfg.enable_uart_path) + u8::from(cfg.enable_udp_path);
+    if enabled_paths != 1 {
+        return Err(
+            "No-inference mode requires exactly one enabled path: either --enable-uart-path or --enable-udp-path.".to_string(),
+        );
+    }
+
+    if cfg.enable_uart_path {
+        if cfg.uart_use_synthetic {
+            return Err(
+                "No-inference UART mode must use real hardware, so --uart-use-synthetic is not allowed.".to_string(),
+            );
+        }
+        if !cfg.print_uart_input {
+            return Err(
+                "No-inference UART mode is useless unless --print-uart-input is enabled.".to_string(),
+            );
+        }
+    }
+
+    if cfg.enable_udp_path {
+        if cfg.udp_use_synthetic {
+            return Err(
+                "No-inference UDP mode must use real hardware, so --udp-use-synthetic is not allowed.".to_string(),
+            );
+        }
+        if !cfg.print_udp_input {
+            return Err(
+                "No-inference UDP mode is useless unless --print-udp-input is enabled.".to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cfg = match parse_args() {
         Ok(v) => v,
@@ -359,6 +410,12 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    if let Err(e) = validate_runtime_config(&cfg) {
+        eprintln!("Configuration error: {}", e);
+        print_help();
+        std::process::exit(2);
+    }
 
     if cfg.dry_run {
         if let Err(e) = run_dry_run(&cfg) {
@@ -409,7 +466,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
 
     let mut uart_reader_started = false;
-    if cfg.enable_uart_path && !cfg.uart_use_synthetic {
+    if cfg.enable_uart_path && (!cfg.enable_inference || !cfg.uart_use_synthetic) {
         let uart_config = UartConfig::new(&cfg.uart_port, cfg.uart_baud);
         let uart = uart::Uart::open(&uart_config)?;
         let uart_buf_clone = Arc::clone(&uart_buffer);
@@ -423,7 +480,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     }
 
     let mut udp_reader_started = false;
-    if cfg.enable_udp_path && !cfg.udp_use_synthetic {
+    if cfg.enable_udp_path && (!cfg.enable_inference || !cfg.udp_use_synthetic) {
         let udp_buf_clone = Arc::clone(&udp_buffer);
         let bind_addr = cfg.udp_bind.clone();
         let print_udp_input = cfg.print_udp_input;
@@ -436,13 +493,24 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     }
 
     println!(
-        "HW mode active: uart={} ({}) udp={} ({}) inference={} infer_print={} uart_print={} udp_print={} ipc={}",
+        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_print={} udp_print={} ipc={}",
         if cfg.enable_uart_path { "on" } else { "off" },
-        if cfg.uart_use_synthetic || !uart_reader_started { "synthetic" } else { "real" },
+        if cfg.enable_inference && cfg.uart_use_synthetic {
+            "synthetic"
+        } else if uart_reader_started {
+            "real"
+        } else {
+            "off"
+        },
         if cfg.enable_udp_path { "on" } else { "off" },
-        if cfg.udp_use_synthetic || !udp_reader_started { "synthetic" } else { "real" },
+        if cfg.enable_inference && cfg.udp_use_synthetic {
+            "synthetic"
+        } else if udp_reader_started {
+            "real"
+        } else {
+            "off"
+        },
         if cfg.enable_inference { "on" } else { "off" },
-        if cfg.print_inference_results { "on" } else { "off" },
         if cfg.print_uart_input { "on" } else { "off" },
         if cfg.print_udp_input { "on" } else { "off" },
         match cfg.ipc_mode {
@@ -457,40 +525,48 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     loop {
         cycle += 1;
 
-        let power_raw = acquire_power_sample(cfg, &uart_buffer, cycle);
+        if !cfg.enable_inference {
+            thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+
+        let Some(power_raw) = acquire_power_sample(cfg, &uart_buffer, cycle) else {
+            thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        };
+        let Some(iq_iq_pairs) = acquire_iq_samples(cfg, &udp_buffer, cycle) else {
+            thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        };
+
         let power_lna_dbm = calibrate_power_raw_to_dbm(power_raw.power_lna_raw);
         let power_pa_dbm = calibrate_power_raw_to_dbm(power_raw.power_pa_raw);
+        let resp = infer_once(
+            cfg,
+            inference_client.as_mut().unwrap(),
+            &mut shm_ring,
+            &mut slot_index,
+            cycle,
+            &iq_iq_pairs,
+            power_lna_dbm,
+            power_pa_dbm,
+        )?;
 
-        let iq_iq_pairs = acquire_iq_samples(cfg, &udp_buffer, cycle);
-
-        if cfg.enable_inference {
-            let resp = infer_once(
-                cfg,
-                inference_client.as_mut().unwrap(),
-                &mut shm_ring,
-                &mut slot_index,
-                cycle,
-                &iq_iq_pairs,
+        if cfg.print_inference_results {
+            println!(
+                "HW seq={} status={} lna={} filter={} center={} mixer_dbm={:.3} ifamp_db={:.3} evm={:.3} pt_ms={:.3} power_lna_dbm={:.3} power_pa_dbm={:.3}",
+                resp.seq_id,
+                resp.status_code,
+                resp.lna_class,
+                resp.filter_class,
+                resp.center_class,
+                resp.mixer_dbm,
+                resp.ifamp_db,
+                resp.evm_value,
+                resp.processing_time_ms,
                 power_lna_dbm,
                 power_pa_dbm,
-            )?;
-
-            if cfg.print_inference_results {
-                println!(
-                    "HW seq={} status={} lna={} filter={} center={} mixer_dbm={:.3} ifamp_db={:.3} evm={:.3} pt_ms={:.3} power_lna_dbm={:.3} power_pa_dbm={:.3}",
-                    resp.seq_id,
-                    resp.status_code,
-                    resp.lna_class,
-                    resp.filter_class,
-                    resp.center_class,
-                    resp.mixer_dbm,
-                    resp.ifamp_db,
-                    resp.evm_value,
-                    resp.processing_time_ms,
-                    power_lna_dbm,
-                    power_pa_dbm,
-                );
-            }
+            );
         }
 
         thread::sleep(std::time::Duration::from_millis(10));
@@ -705,34 +781,39 @@ fn acquire_power_sample(
     cfg: &AppConfig,
     uart_buffer: &Arc<Mutex<CircularBuffer<PowerMeasurement>>>,
     cycle: u64,
-) -> PowerMeasurement {
-    if !cfg.enable_uart_path || cfg.uart_use_synthetic {
-        return generate_synthetic_power_raw(cycle);
+
+) -> Option<PowerMeasurement> {
+    if !cfg.enable_uart_path {
+        return None;
     }
 
-    if let Some(power) = uart_buffer.lock().unwrap().read() {
-        return power;
+    if cfg.enable_inference && cfg.uart_use_synthetic {
+        return Some(generate_synthetic_power_raw(cycle));
     }
 
-    generate_synthetic_power_raw(cycle)
+    uart_buffer.lock().unwrap().read()
 }
 
 fn acquire_iq_samples(
     cfg: &AppConfig,
     udp_buffer: &Arc<Mutex<CircularBuffer<receive_data::IQSample>>>,
     cycle: u64,
-) -> Vec<(f32, f32)> {
-    if !cfg.enable_udp_path || cfg.udp_use_synthetic {
-        return generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1);
+) -> Option<Vec<(f32, f32)>> {
+    if !cfg.enable_udp_path {
+        return None;
+    }
+
+    if cfg.enable_inference && cfg.udp_use_synthetic {
+        return Some(generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1));
     }
 
     if let Some(sample) = udp_buffer.lock().unwrap().read() {
         if let Ok(parsed) = sample.parse_qi_interleaved_i16_to_iq_f32() {
-            return parsed;
+            return Some(parsed);
         }
     }
 
-    generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1)
+    None
 }
 
 fn calibrate_power_raw_to_dbm(raw_u12: f32) -> f32 {

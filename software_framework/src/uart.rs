@@ -10,6 +10,7 @@ pub struct UartConfig {
 
 impl UartConfig {
     pub fn new(port: &str, baud_rate: u32) -> Self {
+        let port = normalize_uart_port(port);
         Self {
             port: port.into(),
             baud_rate,
@@ -27,7 +28,28 @@ impl Uart {
         let port = serialport::new(&config.port, config.baud_rate)
             .timeout(Duration::from_millis(config.timeout_ms))
             .open()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(|e| {
+                let available_ports = match serialport::available_ports() {
+                    Ok(ports) if ports.is_empty() => "none detected".to_string(),
+                    Ok(ports) => ports
+                        .into_iter()
+                        .map(|port| port.port_name)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    Err(list_err) => format!("unavailable ({})", list_err),
+                };
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "Failed to open UART port '{}' at {} baud (timeout {} ms): {}. On macOS/Linux, pass the full device path such as '/dev/cu.usbmodem11203' or '/dev/ttyUSB0' rather than a bare device name. Available serial ports: {}.",
+                        config.port,
+                        config.baud_rate,
+                        config.timeout_ms,
+                        e,
+                        available_ports,
+                    ),
+                )
+            })?;
         Ok(Self { inner: port })
     }
 
@@ -55,4 +77,16 @@ impl Write for Uart {
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
+}
+
+fn normalize_uart_port(port: &str) -> String {
+    if port.starts_with('/') {
+        return port.to_string();
+    }
+
+    if port.starts_with("cu.") || port.starts_with("tty.") {
+        return format!("/dev/{}", port);
+    }
+
+    port.to_string()
 }
