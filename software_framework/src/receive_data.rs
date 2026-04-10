@@ -4,6 +4,14 @@ use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+const ADC_MAX_U12: f32 = 4095.0;
+const ADC_VREF_VOLTS: f32 = 3.3;
+const SENSOR_MIN_VOLTS: f32 = 0.2;
+const SENSOR_MAX_VOLTS: f32 = 1.7;
+const SENSOR_MIN_DBM: f32 = -30.0;
+const SENSOR_MAX_DBM: f32 = 15.0;
+const SENSOR_DBM_BIAS: f32 = 10.0;
+
 // Data structures for parsed data
 #[derive(Clone, Debug)]
 pub struct IQSample {
@@ -134,95 +142,66 @@ pub fn receive_udp_data_with_bind(
     }
 }
 
-/// Reads UART packets: power_lna_raw(4) + power_pa_raw(4) = 8 bytes each
-pub fn receive_uart_data(
-    mut uart: Uart,
-    buffer: Arc<Mutex<CircularBuffer<PowerMeasurement>>>,
-) -> io::Result<()> {
-    let mut buf = [0u8; 8];
-
-    loop {
-        match uart.read_exact(&mut buf) {
-            Ok(()) => {
-                let power_lna_raw = f32::from_be_bytes(buf[0..4].try_into().unwrap());
-                let power_pa_raw = f32::from_be_bytes(buf[4..8].try_into().unwrap());
-                buffer.lock().unwrap().write(PowerMeasurement {
-                    power_lna_raw,
-                    power_pa_raw,
-                });
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => continue,
-            Err(e) => return Err(e),
-        }
-    }
-}
-
 pub fn receive_uart_adc_measurements(
     mut uart: Uart,
     buffer: Arc<Mutex<CircularBuffer<PowerMeasurement>>>,
     print_uart_input: bool,
 ) -> io::Result<()> {
     const ADC_CMD: &[u8] = b"adc read\r\n";
+    const MAX_FRAMES_PER_REQUEST: usize = 8;
 
     loop {
         uart.write_all(ADC_CMD)?;
         uart.flush()?;
 
-        let raw_24 = match read_adc_response_24bit(&mut uart) {
-            Ok(v) => v,
-            Err(ref e)
-                if e.kind() == io::ErrorKind::TimedOut
-                    || e.kind() == io::ErrorKind::InvalidData =>
-            {
+        let mut parsed_sample: Option<(f32, f32)> = None;
+        for _ in 0..MAX_FRAMES_PER_REQUEST {
+            let response = match read_uart_response_frame(&mut uart) {
+                Ok(v) => v,
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => break,
+                Err(e) => return Err(e),
+            };
+
+            if let Some(v) = parse_ascii_power_csv(&response) {
+                parsed_sample = Some(v);
+                break;
+            }
+
+            if print_uart_input {
+                let raw = String::from_utf8_lossy(&response);
+                eprintln!("UART ignored frame: {:?}", raw.trim_end_matches(['\r', '\n']));
+            }
+        }
+
+        let (power_lna_raw, power_pa_raw) = match parsed_sample {
+            Some(v) => v,
+            None => {
+                if print_uart_input {
+                    eprintln!("UART: no valid CSV sample in response to adc read");
+                }
                 continue;
             }
-            Err(e) => return Err(e),
         };
-        let power_lna_raw = ((raw_24 >> 12) & 0x0FFF) as u16;
-        let power_pa_raw = (raw_24 & 0x0FFF) as u16;
 
         buffer.lock().unwrap().write(PowerMeasurement {
-            power_lna_raw: power_lna_raw as f32,
-            power_pa_raw: power_pa_raw as f32,
+            power_lna_raw,
+            power_pa_raw,
         });
 
         if print_uart_input {
+            let lna_dbm = calibrate_power_raw_to_dbm(power_lna_raw);
+            let pa_dbm = calibrate_power_raw_to_dbm(power_pa_raw);
             eprintln!(
-                "UART ADC raw: lna={} pa={} (packed=0x{:06X})",
+                "UART power: lna_raw={:.0} lna_dbm={:.3} pa_raw={:.0} pa_dbm={:.3}",
                 power_lna_raw,
+                lna_dbm,
                 power_pa_raw,
-                raw_24 & 0x00FF_FFFF
+                pa_dbm,
             );
         }
 
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-fn read_adc_response_24bit(uart: &mut Uart) -> io::Result<u32> {
-    const MAX_FRAMES_PER_REQUEST: usize = 8;
-
-    for _ in 0..MAX_FRAMES_PER_REQUEST {
-        let response = read_uart_response_frame(uart)?;
-
-        if is_ignorable_uart_frame(&response) {
-            continue;
-        }
-
-        if let Some(v) = parse_adc_payload(&response) {
-            return Ok(v);
-        }
-
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("Unsupported ADC UART response: {:02X?}", response),
-        ));
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "No valid ADC payload in UART response frames",
-    ))
 }
 
 fn read_uart_response_frame(uart: &mut Uart) -> io::Result<Vec<u8>> {
@@ -245,7 +224,7 @@ fn read_uart_response_frame(uart: &mut Uart) -> io::Result<Vec<u8>> {
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "No UART response for adc read b",
+                    "No UART response frame",
                 ));
             }
             Err(e) => return Err(e),
@@ -255,75 +234,41 @@ fn read_uart_response_frame(uart: &mut Uart) -> io::Result<Vec<u8>> {
     if response.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,
-            "No UART response for adc read b",
+            "No UART response frame",
         ));
     }
 
     Ok(response)
 }
 
-fn is_ignorable_uart_frame(response: &[u8]) -> bool {
+fn parse_ascii_power_csv(response: &[u8]) -> Option<(f32, f32)> {
     let text = String::from_utf8_lossy(response);
     let trimmed = text.trim();
 
-    trimmed.is_empty()
-        || trimmed == ">"
-        || trimmed.eq_ignore_ascii_case("ok")
-    || trimmed.eq_ignore_ascii_case("adc read")
-        || trimmed.eq_ignore_ascii_case("adc read b")
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return None;
+    }
+
+    let mut parts = trimmed.split(',');
+    let lna = parts.next()?.parse::<f32>().ok()?;
+    let pa = parts.next()?.parse::<f32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    Some((lna, pa))
 }
 
-fn parse_adc_payload(response: &[u8]) -> Option<u32> {
-    let text = String::from_utf8_lossy(response);
-    let trimmed = text.trim();
-
-    let hex_only: String = response
-        .iter()
-        .filter_map(|b| {
-            let c = *b as char;
-            if c.is_ascii_hexdigit() {
-                Some(c)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let has_numeric_digit = trimmed.chars().any(|c| c.is_ascii_digit());
-    if has_numeric_digit && hex_only.len() >= 6 {
-        let s = &hex_only[hex_only.len() - 6..];
-        if let Ok(v) = u32::from_str_radix(s, 16) {
-            return Some(v & 0x00FF_FFFF);
-        }
-    }
-
-    let binary: Vec<u8> = response
-        .iter()
-        .copied()
-        .filter(|b| *b != b'\r' && *b != b'\n')
-        .collect();
-
-    // Prefer strict 3-byte binary payloads; avoid interpreting echoed ASCII as ADC bytes.
-    if binary.len() == 3 {
-        let v = ((binary[0] as u32) << 16) | ((binary[1] as u32) << 8) | (binary[2] as u32);
-        return Some(v & 0x00FF_FFFF);
-    }
-
-    // Common shell/prompt shape: [B0 B1 B2 '>' ' '].
-    if binary.len() >= 5 && binary.ends_with(b"> ") {
-        let n = binary.len();
-        let v = ((binary[n - 5] as u32) << 16)
-            | ((binary[n - 4] as u32) << 8)
-            | (binary[n - 3] as u32);
-        return Some(v & 0x00FF_FFFF);
-    }
-
-    // If the frame includes non-ASCII bytes, treat the first three bytes as payload.
-    let has_non_ascii = binary.iter().any(|b| !b.is_ascii());
-    if has_non_ascii && binary.len() >= 3 {
-        let v = ((binary[0] as u32) << 16) | ((binary[1] as u32) << 8) | (binary[2] as u32);
-        return Some(v & 0x00FF_FFFF);
-    }
-
-    None
+fn calibrate_power_raw_to_dbm(raw_u12: f32) -> f32 {
+    let raw = raw_u12.clamp(0.0, ADC_MAX_U12);
+    let voltage = (raw / ADC_MAX_U12) * ADC_VREF_VOLTS;
+    let clamped_voltage = voltage.clamp(SENSOR_MIN_VOLTS, SENSOR_MAX_VOLTS);
+    let span = SENSOR_MAX_VOLTS - SENSOR_MIN_VOLTS;
+    let ratio = if span > 0.0 {
+        (clamped_voltage - SENSOR_MIN_VOLTS) / span
+    } else {
+        0.0
+    };
+    let dbm = SENSOR_MIN_DBM + ratio * (SENSOR_MAX_DBM - SENSOR_MIN_DBM);
+    dbm + SENSOR_DBM_BIAS
 }
