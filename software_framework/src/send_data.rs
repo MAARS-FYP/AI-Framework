@@ -7,6 +7,7 @@ use std::sync::mpsc::Receiver;
 pub fn send_uart_data(mut uart: Uart, rx: Receiver<Vec<u8>>) -> io::Result<()> {
     for data in rx {
         uart.write_all(&data)?;
+        uart.flush()?;
     }
     Ok(())
 }

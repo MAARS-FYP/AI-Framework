@@ -4,6 +4,7 @@ mod receive_data;
 mod send_data;
 mod shm_ring;
 mod uart;
+mod uart_commands;
 
 use inference_client::InferenceSocketClient;
 use protocol::{InferenceRequest, InferenceResponse, InferenceShmRequest};
@@ -11,9 +12,11 @@ use receive_data::{CircularBuffer, PowerMeasurement};
 use shm_ring::{SharedMemoryRingBuffer, SharedMemoryRingSpec};
 use std::f32::consts::PI;
 use std::io;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use uart::UartConfig;
+use uart_commands::{CommandTracker, map_agent_controls};
 
 const DEFAULT_ENABLE_UART_PATH: bool = true;
 const DEFAULT_ENABLE_UDP_PATH: bool = true;
@@ -464,11 +467,25 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
 
     let uart_buffer = Arc::new(Mutex::new(CircularBuffer::<PowerMeasurement>::new(1024)));
     let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
+    let mut uart_command_tx: Option<mpsc::Sender<Vec<u8>>> = None;
+    let mut command_tracker = CommandTracker::default();
 
     let mut uart_reader_started = false;
     if cfg.enable_uart_path && (!cfg.enable_inference || !cfg.uart_use_synthetic) {
         let uart_config = UartConfig::new(&cfg.uart_port, cfg.uart_baud);
         let uart = uart::Uart::open(&uart_config)?;
+
+        if cfg.enable_inference {
+            let uart_writer = uart.try_clone()?;
+            let (tx, rx) = mpsc::channel::<Vec<u8>>();
+            thread::spawn(move || {
+                if let Err(e) = send_data::send_uart_data(uart_writer, rx) {
+                    eprintln!("UART sender error: {}", e);
+                }
+            });
+            uart_command_tx = Some(tx);
+        }
+
         let uart_buf_clone = Arc::clone(&uart_buffer);
         let print_uart_input = cfg.print_uart_input;
         thread::spawn(move || {
@@ -493,7 +510,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     }
 
     println!(
-        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_print={} udp_print={} ipc={}",
+        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_cmd_tx={} uart_print={} udp_print={} ipc={}",
         if cfg.enable_uart_path { "on" } else { "off" },
         if cfg.enable_inference && cfg.uart_use_synthetic {
             "synthetic"
@@ -511,6 +528,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
             "off"
         },
         if cfg.enable_inference { "on" } else { "off" },
+        if uart_command_tx.is_some() { "on" } else { "off" },
         if cfg.print_uart_input { "on" } else { "off" },
         if cfg.print_udp_input { "on" } else { "off" },
         match cfg.ipc_mode {
@@ -567,6 +585,27 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
                 power_lna_dbm,
                 power_pa_dbm,
             );
+        }
+
+        if let Some(tx) = uart_command_tx.as_ref() {
+            let control_values = map_agent_controls(&resp)?;
+            let commands = command_tracker.commands_for(&control_values);
+            for command in commands {
+                if let Err(e) = tx.send(command.clone()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("Failed to queue UART command for seq {}: {}", resp.seq_id, e),
+                    ));
+                }
+                if cfg.print_inference_results {
+                    let text = String::from_utf8_lossy(&command);
+                    println!(
+                        "HW seq={} uart_cmd={}",
+                        resp.seq_id,
+                        text.trim_end_matches(['\r', '\n'])
+                    );
+                }
+            }
         }
 
         thread::sleep(std::time::Duration::from_millis(10));
@@ -649,6 +688,7 @@ fn run_simulation(cfg: &AppConfig) -> io::Result<()> {
     );
 
     let mut slot_index = 0usize;
+    let mut command_tracker = CommandTracker::default();
     let mut cycle: u64 = 0;
     loop {
         cycle += 1;
@@ -694,6 +734,17 @@ fn run_simulation(cfg: &AppConfig) -> io::Result<()> {
             resp.evm_value,
             resp.processing_time_ms,
         );
+
+        let control_values = map_agent_controls(&resp)?;
+        let commands = command_tracker.commands_for(&control_values);
+        for command in commands {
+            let text = String::from_utf8_lossy(&command);
+            println!(
+                "SIM cycle={} uart_cmd={}",
+                cycle,
+                text.trim_end_matches(['\r', '\n'])
+            );
+        }
 
         thread::sleep(std::time::Duration::from_millis(cfg.simulate_interval_ms));
     }

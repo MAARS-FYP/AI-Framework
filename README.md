@@ -24,6 +24,21 @@ Raw I/Q Signal → STFT + EVM → Two data paths:
                     → Mixer Agent (rule-based: centre-freq → 2405/2420/2435 MHz)
 ```
 
+## Host-to-STM UART Contract
+
+For deployment, the host software sends only high-level agent outputs over UART. The STM32 firmware owns low-level hardware actuation details (mux routing, IF mapping equation, and register-level programming).
+
+Host command set:
+
+- `lna 3` or `lna 5`
+- `filter 1`, `filter 10`, or `filter 20`
+- `if_amp x` where `x` is the raw IF-amp model output (`ifamp_db`)
+
+Notes:
+
+- `adc read` remains the telemetry path from STM32 to host for power monitoring.
+- LO attenuation and LO center-frequency host transmission are intentionally out of scope in the current integration step.
+
 ## Quick Start
 
 ### Installation
