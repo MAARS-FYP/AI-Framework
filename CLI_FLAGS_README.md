@@ -134,7 +134,7 @@ Top-level flags:
 - `--shm-name <name>`: Shared-memory ring buffer name. Default: `maars_iq_ring`.
 - `--shm-slots <int>`: Number of shared-memory slots. Default: `8`.
 - `--shm-slot-capacity <int>`: Slot capacity in IQ samples. Default: `8192`.
-- `--dry-run`: Run without UART or UDP hardware by generating synthetic IQ data.
+- `--dry-run`: Run without UART or ILA hardware by generating synthetic IQ data.
 - `--simulate`: Run a continuous hardware-free simulation loop.
 - `--dry-run-cycles <int>`: Number of dry-run inference cycles. Default: `1`.
 - `--simulate-cycles <int>`: Number of simulation cycles; `0` means run continuously. Default: `0`.
@@ -144,7 +144,11 @@ Top-level flags:
 - `--dry-run-power-pa <float>`: Synthetic PA power in dBm. Default: `-22`.
 - `--uart-port <path>`: UART device path. Default: `/dev/cu.usbmodem11203`.
 - `--uart-baud <int>`: UART baud rate. Default: `115200`.
-- `--udp-bind <host:port>`: UDP bind address for IQ input. Default: `0.0.0.0:5001`.
+- `--ila-csv-path <path>`: ILA probe0 CSV path. Default: `./ila_probe0.csv`.
+- `--ila-request-flag-path <path>`: ILA capture request flag path. Default: `./ila_capture_request.txt`.
+- `--ila-poll-interval-ms <int>`: Poll interval for ILA handshake and CSV reads. Default: `20`.
+- `--ila-request-timeout-ms <int>`: Timeout waiting for ILA request acknowledge. Default: `5000`.
+- `--ila-batch-samples <int>`: Probe0 rows consumed per inference batch. Default: `256`.
 
 Path and mode toggles:
 
@@ -152,10 +156,10 @@ Path and mode toggles:
 - `--disable-uart-path`: Disable the UART input path.
 - `--uart-use-synthetic`: Use synthetic UART input instead of hardware input.
 - `--uart-use-real`: Use real UART hardware input.
-- `--enable-udp-path`: Enable the UDP input path. Default: on.
-- `--disable-udp-path`: Disable the UDP input path.
-- `--udp-use-synthetic`: Use synthetic UDP input instead of hardware input.
-- `--udp-use-real`: Use real UDP hardware input.
+- `--enable-ila-path`: Enable the ILA CSV input path. Default: on.
+- `--disable-ila-path`: Disable the ILA CSV input path.
+- `--ila-use-synthetic`: Use synthetic IQ input instead of hardware input.
+- `--ila-use-real`: Use real ILA CSV input.
 - `--enable-inference`: Enable the Python inference path. Default: on.
 - `--disable-inference`: Disable inference and run one displayed hardware path.
 
@@ -165,8 +169,8 @@ Print and logging toggles:
 - `--no-print-inference-results`: Disable inference summaries.
 - `--print-uart-input`: Print UART input data.
 - `--no-print-uart-input`: Disable UART input data printing.
-- `--print-udp-input`: Print UDP packet debug output.
-- `--no-print-udp-input`: Disable UDP packet debug output.
+- `--print-ila-input`: Print ILA CSV decode debug output.
+- `--no-print-ila-input`: Disable ILA CSV decode debug output.
 
 Valon output flags:
 
@@ -181,11 +185,11 @@ Other runtime flags:
 
 Important runtime constraints:
 
-- Inference mode requires both `--enable-uart-path` and `--enable-udp-path`.
-- No-inference mode requires exactly one enabled path: either UART or UDP.
+- Inference mode requires both `--enable-uart-path` and `--enable-ila-path`.
+- No-inference mode requires exactly one enabled path: either UART or ILA.
 - No-inference UART mode must use real hardware, so `--uart-use-synthetic` is rejected there.
-- No-inference UDP mode must use real hardware, so `--udp-use-synthetic` is rejected there.
-- In no-inference mode, UART requires `--print-uart-input`, and UDP requires `--print-udp-input`.
+- No-inference ILA mode must use real hardware, so `--ila-use-synthetic` is rejected there.
+- In no-inference mode, UART requires `--print-uart-input`, and ILA requires `--print-ila-input`.
 
 ## Valon Synthesizer Worker
 
@@ -266,7 +270,11 @@ Launcher flags:
 - `--worker-device <auto|cpu|mps|cuda>`: Python worker device selection.
 - `--uart-port <path>`: UART port passed to Rust in hardware mode.
 - `--uart-baud <int>`: UART baud passed to Rust in hardware mode.
-- `--udp-bind <host:port>`: UDP bind address passed to Rust in hardware mode.
+- `--ila-csv-path <path>`: ILA probe0 CSV path passed to Rust in hardware mode.
+- `--ila-request-flag-path <path>`: ILA capture request flag passed to Rust in hardware mode.
+- `--ila-poll-interval-ms <int>`: ILA CSV poll interval passed to Rust in hardware mode.
+- `--ila-request-timeout-ms <int>`: ILA request timeout passed to Rust in hardware mode.
+- `--ila-batch-samples <int>`: Probe0 rows consumed per inference in Rust hardware mode.
 - `--simulate-cycles <int>`: Number of simulation cycles. `0` means continuous.
 - `--simulate-interval-ms <int>`: Delay between simulation cycles.
 - `--simulate-samples <int>`: Synthetic IQ samples per cycle in simulation mode.
@@ -287,7 +295,7 @@ Launcher flags:
 Forwarding behavior:
 
 - Everything after `--` is forwarded to Rust unchanged as extra Rust arguments.
-- In hardware mode, the launcher passes UART and UDP connection settings to Rust.
+- In hardware mode, the launcher passes UART and ILA CSV handshake settings to Rust.
 - In simulation mode, the launcher passes simulation-only values to Rust instead of hardware I/O settings.
 - The launcher starts the Python inference worker first, then the Valon worker when enabled, and then the Rust runtime.
 

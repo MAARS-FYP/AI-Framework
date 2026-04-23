@@ -1,8 +1,9 @@
 use crate::uart::Uart;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::net::UdpSocket;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const ADC_MAX_U12: f32 = 4095.0;
 const ADC_VREF_VOLTS: f32 = 3.3;
@@ -41,10 +42,10 @@ impl IQSample {
         Ok(out)
     }
 
-    /// Display packet contents for debugging (show first few samples)
-    pub fn display_debug_info(&self, packet_num: usize) {
+    /// Display sample payload contents for debugging (show first few samples)
+    pub fn display_debug_info(&self, sample_num: usize, source_label: &str) {
         let num_samples = self.data.len() / 4;
-        eprintln!("=== UDP Packet #{} ===", packet_num);
+        eprintln!("=== {} Sample #{} ===", source_label, sample_num);
         eprintln!("Size: {} bytes ({} I/Q samples)", self.data.len(), num_samples);
         
         // Show first 5 samples
@@ -109,36 +110,45 @@ impl<T: Clone> CircularBuffer<T> {
     }
 }
 
-pub fn receive_udp_data(buffer: Arc<Mutex<CircularBuffer<IQSample>>>) -> io::Result<()> {
-    // Try binding to all interfaces; can be overridden with --udp-bind
-    receive_udp_data_with_bind("172.25.122.155:62510", buffer, false)
-}
-
-pub fn receive_udp_data_with_bind(
-    bind_addr: &str,
+pub fn receive_ila_csv_probe0_data(
+    csv_path: &str,
+    request_flag_path: &str,
     buffer: Arc<Mutex<CircularBuffer<IQSample>>>,
-    print_udp_input: bool,
+    print_ila_input: bool,
+    poll_interval_ms: u64,
+    request_timeout_ms: u64,
+    batch_samples: usize,
 ) -> io::Result<()> {
-    let socket = UdpSocket::bind(bind_addr)?;
-    eprintln!("UDP socket bound to: {}", bind_addr);
-    let mut buf = [0; 1024];
-    let mut packet_count = 0u64;
+    let csv_path = Path::new(csv_path);
+    let request_flag_path = Path::new(request_flag_path);
+    let poll_sleep = Duration::from_millis(poll_interval_ms.max(1));
+    let mut sample_count: u64 = 0;
 
     loop {
-        let (amt, src) = socket.recv_from(&mut buf)?;
-        packet_count += 1;
+        request_capture_if_needed(request_flag_path)?;
 
-        // All 1024 bytes are raw Q,I interleaved i16 data - no header
-        let data = buf[0..amt].to_vec();
+        wait_for_capture_ready(request_flag_path, poll_sleep, request_timeout_ms)?;
 
-        let sample = IQSample { data: data.clone() };
-        
-        if print_udp_input {
-            eprintln!("\n[Packet {}] Received {} bytes from {}", packet_count, amt, src);
-            sample.display_debug_info(packet_count as usize);
+        let Some(data) = collect_probe0_iq_bytes(csv_path, batch_samples)? else {
+            std::thread::sleep(poll_sleep);
+            continue;
+        };
+
+        sample_count += 1;
+        let sample = IQSample { data };
+
+        if print_ila_input {
+            eprintln!(
+                "\n[ILA Capture {}] parsed {} I/Q samples from {}",
+                sample_count,
+                sample.data.len() / 4,
+                csv_path.display()
+            );
+            sample.display_debug_info(sample_count as usize, "ILA CSV");
         }
-        
+
         buffer.lock().unwrap().write(sample);
+        truncate_file(csv_path)?;
     }
 }
 
@@ -239,6 +249,112 @@ fn read_uart_response_frame(uart: &mut Uart) -> io::Result<Vec<u8>> {
     }
 
     Ok(response)
+}
+
+fn request_capture_if_needed(request_flag_path: &Path) -> io::Result<()> {
+    if request_flag_path.exists() {
+        return Ok(());
+    }
+
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(request_flag_path)?;
+    f.write_all(b"capture\n")?;
+    f.flush()?;
+    Ok(())
+}
+
+fn wait_for_capture_ready(
+    request_flag_path: &Path,
+    poll_sleep: Duration,
+    request_timeout_ms: u64,
+) -> io::Result<()> {
+    let timeout = Duration::from_millis(request_timeout_ms.max(1));
+    let start = Instant::now();
+
+    while request_flag_path.exists() {
+        if start.elapsed() > timeout {
+            eprintln!(
+                "ILA capture timeout waiting for request flag to clear: {}",
+                request_flag_path.display()
+            );
+            // Clear stale request so a new capture can be requested next cycle.
+            let _ = fs::remove_file(request_flag_path);
+            return Ok(());
+        }
+        std::thread::sleep(poll_sleep);
+    }
+
+    Ok(())
+}
+
+fn collect_probe0_iq_bytes(csv_path: &Path, batch_samples: usize) -> io::Result<Option<Vec<u8>>> {
+    if !csv_path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(csv_path)?;
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut out = Vec::with_capacity(batch_samples * 4);
+    let mut parsed_rows = 0usize;
+
+    for line in content.lines() {
+        let Some(word) = parse_probe0_word(line) else {
+            continue;
+        };
+
+        let bytes = decode_probe0_qi_word(word);
+        out.extend_from_slice(&bytes);
+        parsed_rows += 1;
+
+        if parsed_rows >= batch_samples {
+            break;
+        }
+    }
+
+    if parsed_rows < batch_samples {
+        return Ok(None);
+    }
+
+    Ok(Some(out))
+}
+
+fn parse_probe0_word(line: &str) -> Option<u32> {
+    let first_field = line.split(',').next()?.trim();
+    if first_field.is_empty() {
+        return None;
+    }
+
+    if let Some(hex) = first_field
+        .strip_prefix("0x")
+        .or_else(|| first_field.strip_prefix("0X"))
+    {
+        return u32::from_str_radix(hex, 16).ok();
+    }
+
+    first_field.parse::<u32>().ok()
+}
+
+fn decode_probe0_qi_word(word: u32) -> [u8; 4] {
+    let q_u16 = ((word >> 16) & 0xFFFF) as u16;
+    let i_u16 = (word & 0xFFFF) as u16;
+    let q_bytes = q_u16.to_le_bytes();
+    let i_bytes = i_u16.to_le_bytes();
+    [q_bytes[0], q_bytes[1], i_bytes[0], i_bytes[1]]
+}
+
+fn truncate_file(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    OpenOptions::new().write(true).truncate(true).open(path)?;
+    Ok(())
 }
 
 fn parse_ascii_power_csv(response: &[u8]) -> Option<(f32, f32)> {

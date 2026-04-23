@@ -21,13 +21,16 @@ use uart_commands::{CommandTracker, map_agent_controls};
 use valon_client::{ValonCommandTracker, map_valon_controls, send_valon_commands};
 
 const DEFAULT_ENABLE_UART_PATH: bool = true;
-const DEFAULT_ENABLE_UDP_PATH: bool = true;
+const DEFAULT_ENABLE_ILA_PATH: bool = true;
 const DEFAULT_UART_USE_SYNTHETIC: bool = false;
-const DEFAULT_UDP_USE_SYNTHETIC: bool = false;
+const DEFAULT_ILA_USE_SYNTHETIC: bool = false;
 const DEFAULT_ENABLE_INFERENCE: bool = true;
 const DEFAULT_PRINT_INFERENCE_RESULTS: bool = true;
 const DEFAULT_PRINT_UART_INPUT: bool = false;
-const DEFAULT_PRINT_UDP_INPUT: bool = false;
+const DEFAULT_PRINT_ILA_INPUT: bool = false;
+const DEFAULT_ILA_POLL_INTERVAL_MS: u64 = 20;
+const DEFAULT_ILA_REQUEST_TIMEOUT_MS: u64 = 5000;
+const DEFAULT_ILA_BATCH_SAMPLES: usize = 256;
 const ADC_MAX_U12: f32 = 4095.0;
 const ADC_VREF_VOLTS: f32 = 3.3;
 const SENSOR_MIN_VOLTS: f32 = 0.2;
@@ -60,15 +63,19 @@ struct AppConfig {
     dry_run_power_pa_dbm: f32,
     uart_port: String,
     uart_baud: u32,
-    udp_bind: String,
+    ila_csv_path: String,
+    ila_request_flag_path: String,
+    ila_poll_interval_ms: u64,
+    ila_request_timeout_ms: u64,
+    ila_batch_samples: usize,
     enable_uart_path: bool,
-    enable_udp_path: bool,
+    enable_ila_path: bool,
     uart_use_synthetic: bool,
-    udp_use_synthetic: bool,
+    ila_use_synthetic: bool,
     enable_inference: bool,
     print_inference_results: bool,
     print_uart_input: bool,
-    print_udp_input: bool,
+    print_ila_input: bool,
     cleanup_shm_on_exit: bool,
     enable_valon: bool,
     valon_socket_path: String,
@@ -105,15 +112,19 @@ impl Default for AppConfig {
             dry_run_power_pa_dbm: -22.0,
             uart_port: "/dev/cu.usbmodem11203".to_string(),
             uart_baud: 115200,
-            udp_bind: "0.0.0.0:5001".to_string(),
+            ila_csv_path: "./ila_probe0.csv".to_string(),
+            ila_request_flag_path: "./ila_capture_request.txt".to_string(),
+            ila_poll_interval_ms: DEFAULT_ILA_POLL_INTERVAL_MS,
+            ila_request_timeout_ms: DEFAULT_ILA_REQUEST_TIMEOUT_MS,
+            ila_batch_samples: DEFAULT_ILA_BATCH_SAMPLES,
             enable_uart_path: DEFAULT_ENABLE_UART_PATH,
-            enable_udp_path: DEFAULT_ENABLE_UDP_PATH,
+            enable_ila_path: DEFAULT_ENABLE_ILA_PATH,
             uart_use_synthetic: DEFAULT_UART_USE_SYNTHETIC,
-            udp_use_synthetic: DEFAULT_UDP_USE_SYNTHETIC,
+            ila_use_synthetic: DEFAULT_ILA_USE_SYNTHETIC,
             enable_inference: DEFAULT_ENABLE_INFERENCE,
             print_inference_results: DEFAULT_PRINT_INFERENCE_RESULTS,
             print_uart_input: DEFAULT_PRINT_UART_INPUT,
-            print_udp_input: DEFAULT_PRINT_UDP_INPUT,
+            print_ila_input: DEFAULT_PRINT_ILA_INPUT,
             cleanup_shm_on_exit: false,
             enable_valon: true,
             valon_socket_path: std::env::var("MAARS_VALON_SOCKET_PATH")
@@ -134,7 +145,7 @@ Options:\n\
   --shm-name <name>                  SHM segment name (default: maars_iq_ring)\n\
   --shm-slots <int>                  SHM slot count (default: 8)\n\
   --shm-slot-capacity <int>          SHM slot capacity in IQ samples (default: 8192)\n\
-  --dry-run                          Run without UART/UDP hardware using synthetic IQ\n\
+    --dry-run                          Run without UART/ILA hardware using synthetic IQ\n\
     --simulate                         Continuous hardware-free simulation in CLI\n\
   --dry-run-cycles <int>             Number of dry-run inference cycles (default: 1)\n\
     --simulate-cycles <int>            Simulation cycles (0 = run continuously, default: 0)\n\
@@ -144,23 +155,27 @@ Options:\n\
   --dry-run-power-pa <float>         Synthetic PA power dBm (default: -22)\n\
     --uart-port <path>                 UART port path (default: /dev/cu.usbmodem1203)\n\
   --uart-baud <int>                  UART baud (default: 115200)\n\
-  --udp-bind <host:port>             UDP bind address for IQ input (default: 127.0.0.1:5000)\n\
+    --ila-csv-path <path>              ILA probe0 CSV path (default: ./ila_probe0.csv)\n\
+    --ila-request-flag-path <path>     ILA capture request flag file (default: ./ila_capture_request.txt)\n\
+    --ila-poll-interval-ms <int>       Poll interval for ILA handshake/CSV reads (default: 20)\n\
+    --ila-request-timeout-ms <int>     Timeout waiting for ILA request ack (default: 5000)\n\
+    --ila-batch-samples <int>          Probe0 rows consumed per inference (default: 256)\n\
         --enable-uart-path                 Enable UART input path (default: on)\n\
         --disable-uart-path                Disable UART input path\n\
         --uart-use-synthetic               Use synthetic UART input when inference is enabled\n\
         --uart-use-real                    Use real UART hardware input\n\
-        --enable-udp-path                  Enable UDP input path (default: on)\n\
-        --disable-udp-path                 Disable UDP input path\n\
-        --udp-use-synthetic                Use synthetic UDP input when inference is enabled\n\
-        --udp-use-real                     Use real UDP hardware input\n\
-        --enable-inference                 Enable Python inference path (requires UART + UDP)\n\
+                --enable-ila-path                  Enable ILA CSV input path (default: on)\n\
+                --disable-ila-path                 Disable ILA CSV input path\n\
+                --ila-use-synthetic                Use synthetic IQ input when inference is enabled\n\
+                --ila-use-real                     Use ILA CSV input when inference is enabled\n\
+                --enable-inference                 Enable Python inference path (requires UART + ILA)\n\
         --disable-inference                Disable inference and run one displayed hardware path\n\
     --print-inference-results          Print inference summaries (default: on)\n\
     --no-print-inference-results       Disable inference summaries\n\
     --print-uart-input                 Print UART input data\n\
     --no-print-uart-input              Disable UART input data printing\n\
-    --print-udp-input                  Print UDP packet debug output\n\
-    --no-print-udp-input               Disable UDP packet debug output\n\
+    --print-ila-input                  Print ILA CSV decode debug output\n\
+    --no-print-ila-input               Disable ILA CSV decode debug output\n\
         --enable-valon                     Enable Valon LO socket output (default: on)\n\
         --disable-valon                    Disable Valon LO socket output\n\
         --valon-socket-path <path>         Valon Unix socket path (default: /tmp/valon5019.sock)\n\
@@ -297,12 +312,43 @@ fn parse_args() -> Result<AppConfig, String> {
                     .parse::<u32>()
                     .map_err(|_| "Invalid int for --uart-baud")?;
             }
-            "--udp-bind" => {
+            "--ila-csv-path" => {
                 idx += 1;
-                cfg.udp_bind = args
+                cfg.ila_csv_path = args
                     .get(idx)
-                    .ok_or("Missing value for --udp-bind")?
+                    .ok_or("Missing value for --ila-csv-path")?
                     .to_string();
+            }
+            "--ila-request-flag-path" => {
+                idx += 1;
+                cfg.ila_request_flag_path = args
+                    .get(idx)
+                    .ok_or("Missing value for --ila-request-flag-path")?
+                    .to_string();
+            }
+            "--ila-poll-interval-ms" => {
+                idx += 1;
+                cfg.ila_poll_interval_ms = args
+                    .get(idx)
+                    .ok_or("Missing value for --ila-poll-interval-ms")?
+                    .parse::<u64>()
+                    .map_err(|_| "Invalid int for --ila-poll-interval-ms")?;
+            }
+            "--ila-request-timeout-ms" => {
+                idx += 1;
+                cfg.ila_request_timeout_ms = args
+                    .get(idx)
+                    .ok_or("Missing value for --ila-request-timeout-ms")?
+                    .parse::<u64>()
+                    .map_err(|_| "Invalid int for --ila-request-timeout-ms")?;
+            }
+            "--ila-batch-samples" => {
+                idx += 1;
+                cfg.ila_batch_samples = args
+                    .get(idx)
+                    .ok_or("Missing value for --ila-batch-samples")?
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid int for --ila-batch-samples")?;
             }
             "--enable-uart-path" => {
                 cfg.enable_uart_path = true;
@@ -316,17 +362,17 @@ fn parse_args() -> Result<AppConfig, String> {
             "--uart-use-real" => {
                 cfg.uart_use_synthetic = false;
             }
-            "--enable-udp-path" => {
-                cfg.enable_udp_path = true;
+            "--enable-ila-path" => {
+                cfg.enable_ila_path = true;
             }
-            "--disable-udp-path" => {
-                cfg.enable_udp_path = false;
+            "--disable-ila-path" => {
+                cfg.enable_ila_path = false;
             }
-            "--udp-use-synthetic" => {
-                cfg.udp_use_synthetic = true;
+            "--ila-use-synthetic" => {
+                cfg.ila_use_synthetic = true;
             }
-            "--udp-use-real" => {
-                cfg.udp_use_synthetic = false;
+            "--ila-use-real" => {
+                cfg.ila_use_synthetic = false;
             }
             "--enable-inference" => {
                 cfg.enable_inference = true;
@@ -346,11 +392,11 @@ fn parse_args() -> Result<AppConfig, String> {
             "--no-print-uart-input" => {
                 cfg.print_uart_input = false;
             }
-            "--print-udp-input" => {
-                cfg.print_udp_input = true;
+            "--print-ila-input" => {
+                cfg.print_ila_input = true;
             }
-            "--no-print-udp-input" => {
-                cfg.print_udp_input = false;
+            "--no-print-ila-input" => {
+                cfg.print_ila_input = false;
             }
             "--cleanup-shm-on-exit" => {
                 cfg.cleanup_shm_on_exit = true;
@@ -381,20 +427,24 @@ fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
         return Ok(());
     }
 
+    if cfg.ila_batch_samples == 0 {
+        return Err("--ila-batch-samples must be greater than zero.".to_string());
+    }
+
     if cfg.enable_inference {
-        if !cfg.enable_uart_path || !cfg.enable_udp_path {
+        if !cfg.enable_uart_path || !cfg.enable_ila_path {
             return Err(
-                "Inference mode requires both --enable-uart-path and --enable-udp-path. Use --uart-use-synthetic and/or --udp-use-synthetic only when a path is not real hardware.".to_string(),
+                "Inference mode requires both --enable-uart-path and --enable-ila-path. Use --uart-use-synthetic and/or --ila-use-synthetic only when a path is not real hardware.".to_string(),
             );
         }
 
         return Ok(());
     }
 
-    let enabled_paths = u8::from(cfg.enable_uart_path) + u8::from(cfg.enable_udp_path);
+    let enabled_paths = u8::from(cfg.enable_uart_path) + u8::from(cfg.enable_ila_path);
     if enabled_paths != 1 {
         return Err(
-            "No-inference mode requires exactly one enabled path: either --enable-uart-path or --enable-udp-path.".to_string(),
+            "No-inference mode requires exactly one enabled path: either --enable-uart-path or --enable-ila-path.".to_string(),
         );
     }
 
@@ -411,15 +461,15 @@ fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
         }
     }
 
-    if cfg.enable_udp_path {
-        if cfg.udp_use_synthetic {
+    if cfg.enable_ila_path {
+        if cfg.ila_use_synthetic {
             return Err(
-                "No-inference UDP mode must use real hardware, so --udp-use-synthetic is not allowed.".to_string(),
+                "No-inference ILA mode must use real hardware, so --ila-use-synthetic is not allowed.".to_string(),
             );
         }
-        if !cfg.print_udp_input {
+        if !cfg.print_ila_input {
             return Err(
-                "No-inference UDP mode is useless unless --print-udp-input is enabled.".to_string(),
+                "No-inference ILA mode is useless unless --print-ila-input is enabled.".to_string(),
             );
         }
     }
@@ -489,7 +539,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     };
 
     let uart_buffer = Arc::new(Mutex::new(CircularBuffer::<PowerMeasurement>::new(1024)));
-    let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
+    let ila_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
     let mut uart_command_tx: Option<mpsc::Sender<Vec<u8>>> = None;
     let mut command_tracker = CommandTracker::default();
     let mut valon_command_tx: Option<mpsc::Sender<valon_client::ValonCommand>> = None;
@@ -533,21 +583,33 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
         uart_reader_started = true;
     }
 
-    let mut udp_reader_started = false;
-    if cfg.enable_udp_path && (!cfg.enable_inference || !cfg.udp_use_synthetic) {
-        let udp_buf_clone = Arc::clone(&udp_buffer);
-        let bind_addr = cfg.udp_bind.clone();
-        let print_udp_input = cfg.print_udp_input;
+    let mut ila_reader_started = false;
+    if cfg.enable_ila_path && (!cfg.enable_inference || !cfg.ila_use_synthetic) {
+        let ila_buf_clone = Arc::clone(&ila_buffer);
+        let ila_csv_path = cfg.ila_csv_path.clone();
+        let ila_request_flag_path = cfg.ila_request_flag_path.clone();
+        let print_ila_input = cfg.print_ila_input;
+        let ila_poll_interval_ms = cfg.ila_poll_interval_ms;
+        let ila_request_timeout_ms = cfg.ila_request_timeout_ms;
+        let ila_batch_samples = cfg.ila_batch_samples;
         thread::spawn(move || {
-            if let Err(e) = receive_data::receive_udp_data_with_bind(&bind_addr, udp_buf_clone, print_udp_input) {
-                eprintln!("UDP receiver error: {}", e);
+            if let Err(e) = receive_data::receive_ila_csv_probe0_data(
+                &ila_csv_path,
+                &ila_request_flag_path,
+                ila_buf_clone,
+                print_ila_input,
+                ila_poll_interval_ms,
+                ila_request_timeout_ms,
+                ila_batch_samples,
+            ) {
+                eprintln!("ILA CSV receiver error: {}", e);
             }
         });
-        udp_reader_started = true;
+        ila_reader_started = true;
     }
 
     println!(
-        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_cmd_tx={} valon={} uart_print={} udp_print={} ipc={}",
+        "HW mode active: uart={} ({}) ila={} ({}) inference={} uart_cmd_tx={} valon={} uart_print={} ila_print={} ipc={}",
         if cfg.enable_uart_path { "on" } else { "off" },
         if cfg.enable_inference && cfg.uart_use_synthetic {
             "synthetic"
@@ -556,10 +618,10 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
         } else {
             "off"
         },
-        if cfg.enable_udp_path { "on" } else { "off" },
-        if cfg.enable_inference && cfg.udp_use_synthetic {
+        if cfg.enable_ila_path { "on" } else { "off" },
+        if cfg.enable_inference && cfg.ila_use_synthetic {
             "synthetic"
-        } else if udp_reader_started {
+        } else if ila_reader_started {
             "real"
         } else {
             "off"
@@ -568,7 +630,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
         if uart_command_tx.is_some() { "on" } else { "off" },
         if valon_command_tx.is_some() { "on" } else { "off" },
         if cfg.print_uart_input { "on" } else { "off" },
-        if cfg.print_udp_input { "on" } else { "off" },
+        if cfg.print_ila_input { "on" } else { "off" },
         match cfg.ipc_mode {
             IpcMode::Direct => "direct",
             IpcMode::Shm => "shm",
@@ -590,7 +652,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
             thread::sleep(std::time::Duration::from_millis(20));
             continue;
         };
-        let Some(iq_iq_pairs) = acquire_iq_samples(cfg, &udp_buffer, cycle) else {
+        let Some(iq_iq_pairs) = acquire_iq_samples(cfg, &ila_buffer, cycle) else {
             thread::sleep(std::time::Duration::from_millis(20));
             continue;
         };
@@ -914,18 +976,18 @@ fn acquire_power_sample(
 
 fn acquire_iq_samples(
     cfg: &AppConfig,
-    udp_buffer: &Arc<Mutex<CircularBuffer<receive_data::IQSample>>>,
+    ila_buffer: &Arc<Mutex<CircularBuffer<receive_data::IQSample>>>,
     cycle: u64,
 ) -> Option<Vec<(f32, f32)>> {
-    if !cfg.enable_udp_path {
+    if !cfg.enable_ila_path {
         return None;
     }
 
-    if cfg.enable_inference && cfg.udp_use_synthetic {
+    if cfg.enable_inference && cfg.ila_use_synthetic {
         return Some(generate_synthetic_iq(cfg.dry_run_samples, cycle as f32 * 0.1));
     }
 
-    if let Some(sample) = udp_buffer.lock().unwrap().read() {
+    if let Some(sample) = ila_buffer.lock().unwrap().read() {
         if let Ok(parsed) = sample.parse_qi_interleaved_i16_to_iq_f32() {
             return Some(parsed);
         }

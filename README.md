@@ -209,7 +209,14 @@ Use the root launcher script to start the full system in correct order (Python w
 ./run_full_system.sh --mode hardware --ipc-mode shm
 ```
 
-Simulation (no real UART/UDP hardware required):
+Hardware mode now expects I/Q ingress from Vivado ILA CSV capture:
+
+1. Run `vivado_ila_capture_to_csv.tcl` in Vivado (`maars_ila_capture_loop`).
+2. Rust creates `ila_capture_request.txt` to request a capture.
+3. TCL writes `ila_probe0.csv` (probe0, depth 16384), then deletes the request file.
+4. Rust consumes the first 256 samples, runs inference, then truncates the CSV.
+
+Simulation (no real UART/ILA hardware required):
 
 ```bash
 ./run_full_system.sh --mode simulate --ipc-mode shm --simulate-cycles 10

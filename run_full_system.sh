@@ -28,7 +28,11 @@ fi
 
 UART_PORT="/dev/ttyUSB0"
 UART_BAUD="115200"
-UDP_BIND="127.0.0.1:5000"
+ILA_CSV_PATH="${ROOT_DIR}/ila_probe0.csv"
+ILA_REQUEST_FLAG_PATH="${ROOT_DIR}/ila_capture_request.txt"
+ILA_POLL_INTERVAL_MS="20"
+ILA_REQUEST_TIMEOUT_MS="5000"
+ILA_BATCH_SAMPLES="256"
 
 SIMULATE_CYCLES="0"
 SIMULATE_INTERVAL_MS="200"
@@ -73,7 +77,11 @@ Options:
 
   --uart-port <path>                 Rust UART port (hardware mode)
   --uart-baud <int>                  Rust UART baud (hardware mode)
-  --udp-bind <host:port>             Rust UDP bind (hardware mode)
+  --ila-csv-path <path>              Rust ILA probe0 CSV path (hardware mode)
+  --ila-request-flag-path <path>     Rust ILA capture request flag file (hardware mode)
+  --ila-poll-interval-ms <int>       Rust ILA poll interval in ms (hardware mode)
+  --ila-request-timeout-ms <int>     Rust ILA request timeout in ms (hardware mode)
+  --ila-batch-samples <int>          Rust probe0 rows consumed per inference (hardware mode)
 
   --simulate-cycles <int>            Simulation cycles (0 = continuous)
   --simulate-interval-ms <int>       Delay between simulation cycles
@@ -146,7 +154,11 @@ while [[ $# -gt 0 ]]; do
     --worker-device) WORKER_DEVICE="$2"; shift 2 ;;
     --uart-port) UART_PORT="$2"; shift 2 ;;
     --uart-baud) UART_BAUD="$2"; shift 2 ;;
-    --udp-bind) UDP_BIND="$2"; shift 2 ;;
+    --ila-csv-path) ILA_CSV_PATH="$2"; shift 2 ;;
+    --ila-request-flag-path) ILA_REQUEST_FLAG_PATH="$2"; shift 2 ;;
+    --ila-poll-interval-ms) ILA_POLL_INTERVAL_MS="$2"; shift 2 ;;
+    --ila-request-timeout-ms) ILA_REQUEST_TIMEOUT_MS="$2"; shift 2 ;;
+    --ila-batch-samples) ILA_BATCH_SAMPLES="$2"; shift 2 ;;
     --simulate-cycles) SIMULATE_CYCLES="$2"; shift 2 ;;
     --simulate-interval-ms) SIMULATE_INTERVAL_MS="$2"; shift 2 ;;
     --simulate-samples) SIMULATE_SAMPLES="$2"; shift 2 ;;
@@ -353,7 +365,11 @@ run_rust() {
     rust_args+=(
       --uart-port "${UART_PORT}"
       --uart-baud "${UART_BAUD}"
-      --udp-bind "${UDP_BIND}"
+      --ila-csv-path "${ILA_CSV_PATH}"
+      --ila-request-flag-path "${ILA_REQUEST_FLAG_PATH}"
+      --ila-poll-interval-ms "${ILA_POLL_INTERVAL_MS}"
+      --ila-request-timeout-ms "${ILA_REQUEST_TIMEOUT_MS}"
+      --ila-batch-samples "${ILA_BATCH_SAMPLES}"
     )
   fi
 

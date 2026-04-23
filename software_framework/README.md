@@ -9,11 +9,12 @@ This will be the final wrapper of the software framework running in the computer
 - `AI-Framework` will create the neurosymbolic models.
 - `Software-Framework` (this) will wrap them with other software components.
 - Data receiving layer.
-  - Receive UDP packets containng I/Q samples, through Ethernet.
+  - Receive I/Q samples through Vivado ILA capture exported as CSV (`probe0`).
   - Receive power measurements through UART.
   - May run in a separate thread/ core.
 - Buffering and storing.
   - Data is buffered in memory, using a circular buffer.
+  - Rust requests each capture via a flag file and consumes the first 256 probe0 rows from CSV.
 - Pass to AI models.
   - May need to convert them to .onnx and load.
 - Send configuration commands back, through UART.
