@@ -24,6 +24,38 @@ Raw I/Q Signal → STFT + EVM → Two data paths:
                     → Mixer Agent (rule-based: centre-freq → 2405/2420/2435 MHz)
 ```
 
+## Host-to-STM UART Contract
+
+For deployment, the host software sends only high-level agent outputs over UART. The STM32 firmware owns low-level hardware actuation details (mux routing, IF mapping equation, and register-level programming).
+
+Host command set:
+
+- `lna 3` or `lna 5`
+- `filter 1`, `filter 10`, or `filter 20`
+- `ifamp x` where `x` is the raw IF-amp model output (`ifamp_db`)
+
+Notes:
+
+- `adc read` remains the telemetry path from STM32 to host for power monitoring.
+
+## Host-to-Valon Socket Contract
+
+LO control is sent to the Valon headless worker over Unix-socket JSON-line IPC.
+
+Host command mapping:
+
+- `mixer_dbm` -> `{"op":"set_rflevel","value_dbm":mixer_dbm}`
+- `center_class` -> detected center frequency `{2405,2420,2435} MHz`
+- LO frequency sent to Valon uses lower-side injection with 25 MHz IF offset:
+  - class `0`: `2405 - 25 = 2380` MHz
+  - class `1`: `2420 - 25 = 2395` MHz
+  - class `2`: `2435 - 25 = 2410` MHz
+
+Runtime behavior:
+
+- Valon commands are change-driven (sent only when mapped value changes).
+- Frequency updates are sent before RF-level updates when both change in one cycle.
+
 ## Quick Start
 
 ### Installation
@@ -168,6 +200,54 @@ python -m ai_framework.cli.inference_socket_client \
 ```
 
 For Rust integration, keep the ring buffer alive and reuse slots in a producer/consumer loop.
+
+### One-Command Deployment Launcher
+
+Use the root launcher script to start the full system in correct order (Python worker first, then Rust app) with matching IPC/SHM settings:
+
+```bash
+./run_full_system.sh --mode hardware --ipc-mode shm
+```
+
+Simulation (no real UART/UDP hardware required):
+
+```bash
+./run_full_system.sh --mode simulate --ipc-mode shm --simulate-cycles 10
+```
+
+You can keep deployment configuration in one file:
+
+```bash
+cp .env.example .env
+```
+
+The launcher auto-loads `.env` if present. You can also pass a specific env file:
+
+```bash
+./run_full_system.sh --env-file ./deploy.env --mode hardware
+```
+
+CLI arguments always override values from `.env`.
+
+What the launcher does:
+
+- Starts Python worker with configured socket/checkpoint/scalers and SHM parameters.
+- Waits for Unix socket readiness.
+- Starts Rust with matching `--ipc-mode`, socket path, sample-rate, and SHM args.
+- Handles graceful shutdown and socket cleanup on exit/signals.
+
+Useful options:
+
+- `--mode hardware|simulate`
+- `--env-file ./deploy.env`
+- `--ipc-mode direct|shm`
+- `--socket-path /tmp/maars_infer.sock`
+- `--sample-rate-hz 25000000`
+- `--shm-name maars_iq_ring --shm-slots 8 --shm-slot-capacity 8192`
+- `--worker-no-unlink-on-exit` (if you do not want worker SHM cleanup)
+- `--rust-cleanup-shm-on-exit` (Rust-side explicit SHM cleanup)
+
+Tip: Use only one SHM cleanup owner to avoid duplicate cleanup warnings. Default launcher behavior uses Python worker cleanup (`--shm-unlink-on-exit`).
 
 ## Data Normalization
 
