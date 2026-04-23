@@ -37,7 +37,24 @@ Host command set:
 Notes:
 
 - `adc read` remains the telemetry path from STM32 to host for power monitoring.
-- LO attenuation and LO center-frequency host transmission are intentionally out of scope in the current integration step.
+
+## Host-to-Valon Socket Contract
+
+LO control is sent to the Valon headless worker over Unix-socket JSON-line IPC.
+
+Host command mapping:
+
+- `mixer_dbm` -> `{"op":"set_rflevel","value_dbm":mixer_dbm}`
+- `center_class` -> detected center frequency `{2405,2420,2435} MHz`
+- LO frequency sent to Valon uses lower-side injection with 25 MHz IF offset:
+  - class `0`: `2405 - 25 = 2380` MHz
+  - class `1`: `2420 - 25 = 2395` MHz
+  - class `2`: `2435 - 25 = 2410` MHz
+
+Runtime behavior:
+
+- Valon commands are change-driven (sent only when mapped value changes).
+- Frequency updates are sent before RF-level updates when both change in one cycle.
 
 ## Quick Start
 

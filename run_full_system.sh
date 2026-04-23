@@ -39,6 +39,15 @@ RUST_CLEANUP_SHM_ON_EXIT="0"
 
 SOCKET_WAIT_TIMEOUT_SEC="30"
 WORKER_PID=""
+VALON_PID=""
+
+VALON_SOCKET_PATH="/tmp/valon5019.sock"
+VALON_PORT=""
+VALON_TIMEOUT="1.0"
+VALON_BAUD="115200"
+VALON_LOG_LEVEL="INFO"
+VALON_WAIT_TIMEOUT_SEC="5"
+VALON_ENABLED_MODE="auto"
 
 usage() {
   cat <<'EOF'
@@ -73,6 +82,14 @@ Options:
   --simulate-power-pa <float>        Simulation PA power dBm
 
   --rust-cleanup-shm-on-exit         Pass --cleanup-shm-on-exit to Rust
+  --enable-valon                     Force-enable Valon worker and Rust Valon output
+  --disable-valon                    Force-disable Valon worker and Rust Valon output
+  --valon-socket-path <path>         Valon worker socket path (default: /tmp/valon5019.sock)
+  --valon-port <path>                Explicit Valon serial port (optional)
+  --valon-timeout <float>            Valon serial timeout seconds (default: 1.0)
+  --valon-baud <int>                 Valon baud rate (default: 115200)
+  --valon-log-level <level>          Valon worker log level (default: INFO)
+  --valon-wait-timeout <int>         Valon socket wait timeout seconds (default: 5)
   --python-bin <path>                Override Python executable
   --help                             Show this help
 
@@ -136,6 +153,14 @@ while [[ $# -gt 0 ]]; do
     --simulate-power-lna) SIMULATE_POWER_LNA="$2"; shift 2 ;;
     --simulate-power-pa) SIMULATE_POWER_PA="$2"; shift 2 ;;
     --rust-cleanup-shm-on-exit) RUST_CLEANUP_SHM_ON_EXIT="1"; shift ;;
+    --enable-valon) VALON_ENABLED_MODE="1"; shift ;;
+    --disable-valon) VALON_ENABLED_MODE="0"; shift ;;
+    --valon-socket-path) VALON_SOCKET_PATH="$2"; shift 2 ;;
+    --valon-port) VALON_PORT="$2"; shift 2 ;;
+    --valon-timeout) VALON_TIMEOUT="$2"; shift 2 ;;
+    --valon-baud) VALON_BAUD="$2"; shift 2 ;;
+    --valon-log-level) VALON_LOG_LEVEL="$2"; shift 2 ;;
+    --valon-wait-timeout) VALON_WAIT_TIMEOUT_SEC="$2"; shift 2 ;;
     --python-bin) PYTHON_BIN="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     --)
@@ -163,8 +188,28 @@ if [[ "${IPC_MODE}" != "direct" && "${IPC_MODE}" != "shm" ]]; then
   exit 2
 fi
 
+is_valon_enabled() {
+  case "${VALON_ENABLED_MODE}" in
+    1) return 0 ;;
+    0) return 1 ;;
+    *)
+      if [[ "${MODE}" == "hardware" ]]; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+}
+
 cleanup() {
   set +e
+  if [[ -n "${VALON_PID}" ]] && kill -0 "${VALON_PID}" 2>/dev/null; then
+    kill "${VALON_PID}" >/dev/null 2>&1 || true
+    sleep 0.2
+    kill -9 "${VALON_PID}" >/dev/null 2>&1 || true
+  fi
+  rm -f "${VALON_SOCKET_PATH}" >/dev/null 2>&1 || true
+
   if [[ -n "${WORKER_PID}" ]] && kill -0 "${WORKER_PID}" 2>/dev/null; then
     "${PYTHON_BIN}" -m ai_framework.cli.inference_socket_client --socket-path "${SOCKET_PATH}" --shutdown >/dev/null 2>&1 || true
     sleep 0.3
@@ -175,6 +220,53 @@ cleanup() {
   rm -f "${SOCKET_PATH}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
+
+start_valon_worker() {
+  if ! is_valon_enabled; then
+    echo "[launcher] valon worker disabled"
+    return
+  fi
+
+  rm -f "${VALON_SOCKET_PATH}" >/dev/null 2>&1 || true
+
+  local valon_args=(
+    valon_worker.py
+    --socket "${VALON_SOCKET_PATH}"
+    --timeout "${VALON_TIMEOUT}"
+    --baud "${VALON_BAUD}"
+    --log-level "${VALON_LOG_LEVEL}"
+  )
+
+  if [[ -n "${VALON_PORT}" ]]; then
+    valon_args+=(--port "${VALON_PORT}")
+  fi
+
+  echo "[launcher] starting Valon worker..."
+  (
+    cd "${ROOT_DIR}/valon_controller"
+    "${PYTHON_BIN}" "${valon_args[@]}"
+  ) &
+  VALON_PID=$!
+  echo "[launcher] valon pid=${VALON_PID}"
+}
+
+wait_for_valon_socket() {
+  if ! is_valon_enabled; then
+    return 0
+  fi
+
+  local waited=0
+  while [[ ! -S "${VALON_SOCKET_PATH}" ]]; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if (( waited >= VALON_WAIT_TIMEOUT_SEC * 10 )); then
+      echo "[launcher] valon socket not ready at ${VALON_SOCKET_PATH} after ${VALON_WAIT_TIMEOUT_SEC}s" >&2
+      return 1
+    fi
+  done
+
+  echo "[launcher] valon socket ready: ${VALON_SOCKET_PATH}"
+}
 
 start_worker() {
   local worker_args=(
@@ -231,6 +323,15 @@ run_rust() {
     --sample-rate-hz "${SAMPLE_RATE_HZ}"
   )
 
+  if is_valon_enabled; then
+    rust_args+=(
+      --enable-valon
+      --valon-socket-path "${VALON_SOCKET_PATH}"
+    )
+  else
+    rust_args+=(--disable-valon)
+  fi
+
   if [[ "${IPC_MODE}" == "shm" ]]; then
     rust_args+=(
       --shm-name "${SHM_NAME}"
@@ -273,4 +374,9 @@ run_rust() {
 
 start_worker
 wait_for_socket
+start_valon_worker
+if ! wait_for_valon_socket; then
+  echo "[launcher] valon startup failed" >&2
+  exit 1
+fi
 run_rust

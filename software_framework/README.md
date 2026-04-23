@@ -40,7 +40,30 @@ Runtime behavior:
 - Command order is deterministic when multiple values change in one cycle: `lna`, then `filter`, then `ifamp`.
 - Existing `adc read` power polling remains active for telemetry.
 
+## Valon LO Output Contract (Host -> Valon Worker)
+
+The software framework also sends mixer-agent outputs to the Valon headless worker through Unix-socket IPC (`valon_controller/valon_worker.py`).
+
+Command mapping:
+
+- `center_class` -> `set_freq` with lower-side IF offset: `LO = detected_center_mhz - 25`
+  - class 0 -> 2380 MHz
+  - class 1 -> 2395 MHz
+  - class 2 -> 2410 MHz
+- `mixer_dbm` -> `set_rflevel` with the same dBm value
+
+Runtime behavior:
+
+- Valon updates are change-driven.
+- When both values change in one cycle, `set_freq` is sent before `set_rflevel`.
+- Main loop uses fire-and-forget dispatch (does not block per command waiting for response).
+
+Launcher behavior (`run_full_system.sh`):
+
+- Hardware mode: starts AI worker, waits for socket, starts Valon worker, waits for Valon socket, then starts Rust.
+- Hardware mode fails fast if Valon socket is not ready.
+- Simulate mode disables Valon by default (override with `--enable-valon`).
+
 Out of current scope:
 
-- LO attenuation command transmission
-- LO center-frequency command transmission
+- Additional LO control channels beyond `set_freq` and `set_rflevel`

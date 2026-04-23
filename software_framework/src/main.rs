@@ -5,6 +5,7 @@ mod send_data;
 mod shm_ring;
 mod uart;
 mod uart_commands;
+mod valon_client;
 
 use inference_client::InferenceSocketClient;
 use protocol::{InferenceRequest, InferenceResponse, InferenceShmRequest};
@@ -17,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use uart::UartConfig;
 use uart_commands::{CommandTracker, map_agent_controls};
+use valon_client::{ValonCommandTracker, map_valon_controls, send_valon_commands};
 
 const DEFAULT_ENABLE_UART_PATH: bool = true;
 const DEFAULT_ENABLE_UDP_PATH: bool = true;
@@ -68,6 +70,8 @@ struct AppConfig {
     print_uart_input: bool,
     print_udp_input: bool,
     cleanup_shm_on_exit: bool,
+    enable_valon: bool,
+    valon_socket_path: String,
 }
 
 impl Default for AppConfig {
@@ -111,6 +115,9 @@ impl Default for AppConfig {
             print_uart_input: DEFAULT_PRINT_UART_INPUT,
             print_udp_input: DEFAULT_PRINT_UDP_INPUT,
             cleanup_shm_on_exit: false,
+            enable_valon: true,
+            valon_socket_path: std::env::var("MAARS_VALON_SOCKET_PATH")
+                .unwrap_or_else(|_| "/tmp/valon5019.sock".to_string()),
         }
     }
 }
@@ -154,6 +161,9 @@ Options:\n\
     --no-print-uart-input              Disable UART input data printing\n\
     --print-udp-input                  Print UDP packet debug output\n\
     --no-print-udp-input               Disable UDP packet debug output\n\
+        --enable-valon                     Enable Valon LO socket output (default: on)\n\
+        --disable-valon                    Disable Valon LO socket output\n\
+        --valon-socket-path <path>         Valon Unix socket path (default: /tmp/valon5019.sock)\n\
     --cleanup-shm-on-exit              Explicitly unlink SHM segment at simulation/dry-run teardown\n\
   --help                             Show this help\n"
     );
@@ -345,6 +355,19 @@ fn parse_args() -> Result<AppConfig, String> {
             "--cleanup-shm-on-exit" => {
                 cfg.cleanup_shm_on_exit = true;
             }
+            "--enable-valon" => {
+                cfg.enable_valon = true;
+            }
+            "--disable-valon" => {
+                cfg.enable_valon = false;
+            }
+            "--valon-socket-path" => {
+                idx += 1;
+                cfg.valon_socket_path = args
+                    .get(idx)
+                    .ok_or("Missing value for --valon-socket-path")?
+                    .to_string();
+            }
             other => return Err(format!("Unknown argument: {}", other)),
         }
         idx += 1;
@@ -469,6 +492,20 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     let udp_buffer = Arc::new(Mutex::new(CircularBuffer::<receive_data::IQSample>::new(1024)));
     let mut uart_command_tx: Option<mpsc::Sender<Vec<u8>>> = None;
     let mut command_tracker = CommandTracker::default();
+    let mut valon_command_tx: Option<mpsc::Sender<valon_client::ValonCommand>> = None;
+    let mut valon_tracker = ValonCommandTracker::default();
+
+    if cfg.enable_inference && cfg.enable_valon {
+        let (tx, rx) = mpsc::channel::<valon_client::ValonCommand>();
+        let valon_socket_path = cfg.valon_socket_path.clone();
+        let print_logs = cfg.print_inference_results;
+        thread::spawn(move || {
+            if let Err(e) = send_valon_commands(&valon_socket_path, rx, print_logs) {
+                eprintln!("Valon sender error: {}", e);
+            }
+        });
+        valon_command_tx = Some(tx);
+    }
 
     let mut uart_reader_started = false;
     if cfg.enable_uart_path && (!cfg.enable_inference || !cfg.uart_use_synthetic) {
@@ -510,7 +547,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
     }
 
     println!(
-        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_cmd_tx={} uart_print={} udp_print={} ipc={}",
+        "HW mode active: uart={} ({}) udp={} ({}) inference={} uart_cmd_tx={} valon={} uart_print={} udp_print={} ipc={}",
         if cfg.enable_uart_path { "on" } else { "off" },
         if cfg.enable_inference && cfg.uart_use_synthetic {
             "synthetic"
@@ -529,6 +566,7 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
         },
         if cfg.enable_inference { "on" } else { "off" },
         if uart_command_tx.is_some() { "on" } else { "off" },
+        if valon_command_tx.is_some() { "on" } else { "off" },
         if cfg.print_uart_input { "on" } else { "off" },
         if cfg.print_udp_input { "on" } else { "off" },
         match cfg.ipc_mode {
@@ -604,6 +642,19 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
                         resp.seq_id,
                         text.trim_end_matches(['\r', '\n'])
                     );
+                }
+            }
+        }
+
+        if let Some(tx) = valon_command_tx.as_ref() {
+            let valon_values = map_valon_controls(&resp)?;
+            let commands = valon_tracker.commands_for(resp.seq_id, &valon_values);
+            for command in commands {
+                if let Err(e) = tx.send(command) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("Failed to queue Valon command for seq {}: {}", resp.seq_id, e),
+                    ));
                 }
             }
         }
@@ -689,6 +740,7 @@ fn run_simulation(cfg: &AppConfig) -> io::Result<()> {
 
     let mut slot_index = 0usize;
     let mut command_tracker = CommandTracker::default();
+    let mut valon_tracker = ValonCommandTracker::default();
     let mut cycle: u64 = 0;
     loop {
         cycle += 1;
@@ -744,6 +796,21 @@ fn run_simulation(cfg: &AppConfig) -> io::Result<()> {
                 cycle,
                 text.trim_end_matches(['\r', '\n'])
             );
+        }
+
+        if cfg.enable_valon {
+            let valon_values = map_valon_controls(&resp)?;
+            let valon_cmds = valon_tracker.commands_for(resp.seq_id, &valon_values);
+            for cmd in valon_cmds {
+                match cmd {
+                    valon_client::ValonCommand::SetFreq { value_mhz, .. } => {
+                        println!("SIM cycle={} valon_cmd=set_freq {:.3}", cycle, value_mhz);
+                    }
+                    valon_client::ValonCommand::SetRfLevel { value_dbm, .. } => {
+                        println!("SIM cycle={} valon_cmd=set_rflevel {:.3}", cycle, value_dbm);
+                    }
+                }
+            }
         }
 
         thread::sleep(std::time::Duration::from_millis(cfg.simulate_interval_ms));
