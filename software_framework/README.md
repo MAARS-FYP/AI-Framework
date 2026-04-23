@@ -32,12 +32,12 @@ Commands sent by host runtime:
 
 - `lna 3` or `lna 5`
 - `filter 1`, `filter 10`, or `filter 20`
-- `if_amp x` where `x` is the raw model output for IF amp (`ifamp_db`)
+- `ifamp x` where `x` is the raw model output for IF amp (`ifamp_db`)
 
 Runtime behavior:
 
 - Commands are sent only when values change (change-driven transmission).
-- Command order is deterministic when multiple values change in one cycle: `lna`, then `filter`, then `if_amp`.
+- Command order is deterministic when multiple values change in one cycle: `lna`, then `filter`, then `ifamp`.
 - Existing `adc read` power polling remains active for telemetry.
 
 Out of current scope:

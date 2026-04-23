@@ -112,14 +112,14 @@ Commands are terminated by **Enter** (CR or LF). Backspace is supported.
 
 These commands are intended for the AI host application. The host sends only agent outputs, and firmware handles the low-level hardware mapping internally.
 
-| Command      | Action                                                                                    |
-| ------------ | ----------------------------------------------------------------------------------------- |
-| `lna 3`      | Set LNA supply selection to 3 V (firmware enforces rail exclusivity)                      |
-| `lna 5`      | Set LNA supply selection to 5 V (firmware enforces rail exclusivity)                      |
-| `filter 1`   | Select 1 MHz filter path (firmware configures both RF muxes)                              |
-| `filter 10`  | Select 10 MHz filter path (firmware configures both RF muxes)                             |
-| `filter 20`  | Select 20 MHz filter path (firmware configures both RF muxes)                             |
-| `if_amp <x>` | Apply IF amp setting from agent value `x` (firmware performs internal conversion/mapping) |
+| Command     | Action                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `lna 3`     | Set LNA supply selection to 3 V (firmware enforces rail exclusivity)                      |
+| `lna 5`     | Set LNA supply selection to 5 V (firmware enforces rail exclusivity)                      |
+| `filter 1`  | Select 1 MHz filter path (firmware configures both RF muxes)                              |
+| `filter 10` | Select 10 MHz filter path (firmware configures both RF muxes)                             |
+| `filter 20` | Select 20 MHz filter path (firmware configures both RF muxes)                             |
+| `ifamp <x>` | Apply IF amp setting from agent value `x` (firmware performs internal conversion/mapping) |
 
 > Low-level commands below remain available for manual debug and bring-up.
 

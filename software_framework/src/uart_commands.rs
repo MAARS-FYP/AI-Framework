@@ -72,7 +72,7 @@ impl CommandTracker {
             None => {
                 commands.push(build_lna_command(next.lna_voltage));
                 commands.push(build_filter_command(next.filter_mhz));
-                commands.push(build_if_amp_command(values.if_amp_value));
+                commands.push(build_ifamp_command(values.if_amp_value));
             }
             Some(prev) => {
                 if prev.lna_voltage != next.lna_voltage {
@@ -82,7 +82,7 @@ impl CommandTracker {
                     commands.push(build_filter_command(next.filter_mhz));
                 }
                 if prev.if_amp_milli != next.if_amp_milli {
-                    commands.push(build_if_amp_command(values.if_amp_value));
+                    commands.push(build_ifamp_command(values.if_amp_value));
                 }
             }
         }
@@ -100,6 +100,6 @@ fn build_filter_command(filter_mhz: u8) -> Vec<u8> {
     format!("filter {}\r\n", filter_mhz).into_bytes()
 }
 
-fn build_if_amp_command(if_amp_value: f32) -> Vec<u8> {
-    format!("if_amp {:.3}\r\n", if_amp_value).into_bytes()
+fn build_ifamp_command(if_amp_value: f32) -> Vec<u8> {
+    format!("ifamp {:.3}\r\n", if_amp_value).into_bytes()
 }

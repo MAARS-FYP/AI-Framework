@@ -32,7 +32,7 @@ Host command set:
 
 - `lna 3` or `lna 5`
 - `filter 1`, `filter 10`, or `filter 20`
-- `if_amp x` where `x` is the raw IF-amp model output (`ifamp_db`)
+- `ifamp x` where `x` is the raw IF-amp model output (`ifamp_db`)
 
 Notes:
 
