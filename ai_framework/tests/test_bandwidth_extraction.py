@@ -55,12 +55,17 @@ def load_dataset_info(data_dir: Path) -> pd.DataFrame:
     return pd.read_csv(csv_path)
 
 
-def load_stft_complex(data_dir: Path, filename: str) -> np.ndarray:
-    """Load a complex STFT file from the stft_complex folder."""
-    stft_path = data_dir / "stft_complex" / filename
-    if not stft_path.exists():
-        raise FileNotFoundError(f"STFT file not found: {stft_path}")
-    return np.load(stft_path)
+def load_stft_complex(data_dir: Path, real_filename: str, imaginary_filename: str) -> np.ndarray:
+    """Load STFT real/imaginary files and reconstruct a complex array."""
+    real_path = data_dir / "stft_data" / real_filename
+    imag_path = data_dir / "stft_complex" / imaginary_filename
+    if not real_path.exists():
+        raise FileNotFoundError(f"STFT real file not found: {real_path}")
+    if not imag_path.exists():
+        raise FileNotFoundError(f"STFT imaginary file not found: {imag_path}")
+    real = np.load(real_path)
+    imag = np.load(imag_path)
+    return np.asarray(real + 1j * imag, dtype=np.complex64)
 
 
 def run_bandwidth_test(
@@ -147,11 +152,12 @@ def run_bandwidth_test(
         # Get ground truth
         true_bw_class = row['Signal_BW_Class']
         true_bw_hz = row['Bandwidth_Hz']
-        stft_file = row['STFT_Complex_File']
+        stft_real_file = row['stft_data_real']
+        stft_imaginary_file = row['stft_data_imaginary']
         
         try:
             # Load STFT data
-            stft_data = load_stft_complex(data_dir, stft_file)
+            stft_data = load_stft_complex(data_dir, stft_real_file, stft_imaginary_file)
             
             # Extract bandwidth
             result = extract_bandwidth_from_stft(
@@ -177,7 +183,7 @@ def run_bandwidth_test(
             # Store result
             sample_result = {
                 'index': idx,
-                'file': stft_file,
+                'file': stft_real_file,
                 'true_bw_class': true_bw_class,
                 'true_bw_hz': true_bw_hz,
                 'pred_bw_class': pred_bw_class,
@@ -201,12 +207,12 @@ def run_bandwidth_test(
             
             if verbose:
                 match_str = "✓" if is_correct else "✗"
-                print(f"{idx:<5} {stft_file:<25} {true_bw_class:<10} {pred_bw_class:<10} "
+                print(f"{idx:<5} {stft_real_file:<25} {true_bw_class:<10} {pred_bw_class:<10} "
                       f"{result.low_cutoff_hz/1e6:<12.3f} {result.high_cutoff_hz/1e6:<12.3f} "
                       f"{result.bandwidth_hz/1e6:<12.3f} {match_str}")
                 
         except Exception as e:
-            print(f"Error processing sample {idx} ({stft_file}): {e}")
+            print(f"Error processing sample {idx} ({stft_real_file}): {e}")
             continue
     
     # Calculate accuracy
@@ -285,7 +291,7 @@ def run_coupled_symbolic_test(
 
     for i in range(n):
         row = df.iloc[i]
-        stft = load_stft_complex(data_dir, row["STFT_Complex_File"])
+        stft = load_stft_complex(data_dir, row["stft_data_real"], row["stft_data_imaginary"])
         filt_cls, center_cls, status = symbolic_coupled_filter_center_select(
             stft,
             threshold_db=threshold_db,
@@ -483,8 +489,9 @@ def calibrate_filter_boundaries(
 
     print("Extracting measured bandwidths for calibration...")
     for _, row in df.iterrows():
-        stft_file = row["STFT_Complex_File"]
-        stft_data = load_stft_complex(data_dir, stft_file)
+        stft_real_file = row["stft_data_real"]
+        stft_imaginary_file = row["stft_data_imaginary"]
+        stft_data = load_stft_complex(data_dir, stft_real_file, stft_imaginary_file)
         result = extract_bandwidth_from_stft(stft_data, config=config, return_debug_info=False)
         measured_bw_mhz.append(result.bandwidth_hz / 1e6)
         target_idx.append(_class_name_to_idx(row["Signal_BW_Class"]))

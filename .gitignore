@@ -1,5 +1,6 @@
 .DS_Store
-ai_framework/dataset/data
+ai_framework/dataset/data/*
+!ai_framework/dataset/data/convert_optimal_control_dataset.py
 __pycache__/
 *.pyc
 .env.example

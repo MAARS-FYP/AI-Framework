@@ -30,9 +30,14 @@ class RFDataset(Dataset):
         df = pd.read_csv(csv_path)
 
         # Classification targets
-        self.lna_targets = (df["Optimal_LNA_Voltage_V"] > 4.0).astype(int).values # Binary classification: 3V vs 5V
+        self.lna_targets = (df["Optimal_LNA_Voltage_V"] > 4.0).astype(int).values  # Binary classification: 3V vs 5V
         self.filter_targets = df["Bandwidth_Hz"].map(SIGNAL_BW_CLASS_MAP).values
-        self.stft_files = df["STFT_Complex_File"].values
+        if "stft_data_real" not in df.columns or "stft_data_imaginary" not in df.columns:
+            raise KeyError(
+                "Expected stft_data_real and stft_data_imaginary columns in dataset CSV"
+            )
+        self.stft_real_files = df["stft_data_real"].values
+        self.stft_imaginary_files = df["stft_data_imaginary"].values
 
         if pd.isna(self.filter_targets).any():
             unknown = sorted(df.loc[pd.isna(self.filter_targets), "Bandwidth_Hz"].unique().tolist())
@@ -59,17 +64,18 @@ class RFDataset(Dataset):
         return len(self.lna_targets)
 
     def __getitem__(self, idx):
-        # Load complex STFT → 2-channel (real/imag), per-sample z-score
-        stft = np.load(self.data_root / "stft_complex" / self.stft_files[idx])
-        real, imag = stft.real, stft.imag
+        # Load real/imaginary STFT components and reconstruct the complex tensor.
+        real = np.load(self.data_root / "stft_data" / self.stft_real_files[idx])
+        imag = np.load(self.data_root / "stft_complex" / self.stft_imaginary_files[idx])
+        stft = np.asarray(real + 1j * imag, dtype=np.complex64)
         spec = np.stack([
             (real - real.mean()) / (real.std() + 1e-8),
             (imag - imag.mean()) / (imag.std() + 1e-8),
         ], axis=0).astype(np.float32)
 
-        # Also keep the raw complex STFT for symbolic processing
+        # Also keep the raw complex STFT for symbolic processing.
         stft_complex_tensor = torch.view_as_real(
-            torch.from_numpy(stft.astype(np.complex64))
+            torch.from_numpy(stft)
         )  # [freq, time, 2] real view
 
         inputs = (
