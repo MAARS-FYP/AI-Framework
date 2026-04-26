@@ -66,7 +66,7 @@ git clone <repo-url>
 cd AI-Framework
 
 # Install dependencies
-pip install torch numpy pandas scikit-learn
+pip install torch tensorboard numpy pandas scikit-learn
 ```
 
 ### Training
@@ -79,7 +79,25 @@ python -m ai_framework.train \
     --lr 1e-3
 ```
 
+# Optional TensorBoard logging
+
+```bash
+python -m ai_framework.train \
+    --csv ai_framework/dataset/data/optimal_control_dataset.csv \
+    --epochs 100 \
+    --batch-size 8 \
+    --lr 1e-3 \
+    --tensorboard \
+    --tb-logdir runs/maars
+```
+
 Trained model and scalers are saved to `checkpoints/`.
+
+To inspect TensorBoard logs:
+
+```bash
+tensorboard --logdir runs/maars
+```
 
 ### Inference (End-to-End)
 

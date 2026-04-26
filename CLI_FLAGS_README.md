@@ -115,6 +115,8 @@ Flags:
 - `--lr <float>`: Learning rate. Default: `1e-3`.
 - `--latent-dim <int>`: Latent dimension for the model backbone. Default: `64`.
 - `--save-dir <path>`: Directory for checkpoints and scaler artifacts. Default: `checkpoints`.
+- `--tensorboard`: Write TensorBoard event files for scalars, graph, and histograms. Default: off.
+- `--tb-logdir <path>`: Root directory for TensorBoard event files. Default: `runs/maars`.
 
 ## Rust Runtime
 

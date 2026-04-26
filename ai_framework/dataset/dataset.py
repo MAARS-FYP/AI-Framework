@@ -8,6 +8,11 @@ from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.preprocessing import StandardScaler
 
 SIGNAL_BW_CLASS_MAP = {1_000_000.0: 0, 10_000_000.0: 1, 20_000_000.0: 2}
+DEFAULT_METRIC_COLUMNS = [
+    "Best_EVM_dB",
+    "Measured_Power_Post_LNA_dBm",
+    "Measured_Power_Post_PA_dBm",
+]
 
 
 class RFDataset(Dataset):
@@ -46,12 +51,13 @@ class RFDataset(Dataset):
         self.filter_targets = self.filter_targets.astype(np.int64)
 
         # Fit or reuse scalers
-        metric_cols = ["Best_EVM_dB", "Measured_Power_Post_LNA_dBm", "Measured_Power_Post_PA_dBm"]
+        metric_cols = scalers.get("metric_columns", DEFAULT_METRIC_COLUMNS) if scalers else DEFAULT_METRIC_COLUMNS
         if scalers is None:
             scalers = {
                 "metrics": StandardScaler().fit(df[metric_cols]),
                 "if_gain": StandardScaler().fit(df[["Optimal_IF_Gain_dB"]]),
                 "mixer_power": StandardScaler().fit(df[["Optimal_LO_Power_dBm"]]),
+                "metric_columns": list(metric_cols),
             }
         self.scalers = scalers
 
@@ -115,11 +121,12 @@ def create_dataloaders(csv_path, data_root=None, batch_size=8, val_split=0.2, se
 
     # Fit scalers on training data only (no data leakage)
     train_df = df.iloc[train_idx]
-    metric_cols = ["Best_EVM_dB", "Measured_Power_Post_LNA_dBm", "Measured_Power_Post_PA_dBm"]
+    metric_cols = DEFAULT_METRIC_COLUMNS
     scalers = {
         "metrics": StandardScaler().fit(train_df[metric_cols]),
         "if_gain": StandardScaler().fit(train_df[["Optimal_IF_Gain_dB"]]),
         "mixer_power": StandardScaler().fit(train_df[["Optimal_LO_Power_dBm"]]),
+        "metric_columns": list(metric_cols),
     }
 
     dataset = RFDataset(csv_path, data_root, scalers=scalers)

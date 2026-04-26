@@ -5,6 +5,8 @@ Usage: python -m ai_framework.train [--epochs N] [--batch-size N] [--lr F]
 """
 
 import argparse
+import datetime
+import json
 import joblib
 from pathlib import Path
 
@@ -35,6 +37,8 @@ def train(
     val_split=0.2,
     save_dir="checkpoints",
     report_symbolic_baseline=True,
+    tensorboard=False,
+    tb_logdir="runs/maars",
 ):
     device = get_device()
     print(f"Device: {device}")
@@ -46,7 +50,8 @@ def train(
     print(f"Train: {len(train_loader.dataset)} samples | Val: {len(val_loader.dataset)} samples")
 
     # --- Models ---
-    backbone = Backbone(latent_dim=latent_dim).to(device)
+    metric_dim = int(len(scalers["metrics"].mean_))
+    backbone = Backbone(latent_dim=latent_dim, metric_dim=metric_dim).to(device)
     lna = LNAAgent(latent_dim).to(device)
     filt = FilterAgent()  # symbolic — no learnable parameters
     mixer = MixerAgent(latent_dim).to(device)
@@ -66,6 +71,35 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     best_val_loss = float("inf")
 
+    writer = None
+    if tensorboard:
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+
+            tb_run_dir = Path(tb_logdir) / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            tb_run_dir.mkdir(parents=True, exist_ok=True)
+            writer = SummaryWriter(log_dir=str(tb_run_dir))
+            writer.add_text(
+                "hparams/config",
+                json.dumps(
+                    {
+                        "csv_path": csv_path,
+                        "data_root": data_root,
+                        "epochs": epochs,
+                        "batch_size": batch_size,
+                        "lr": lr,
+                        "latent_dim": latent_dim,
+                        "val_split": val_split,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+                0,
+            )
+        except ImportError:
+            print("TensorBoard requested, but torch.utils.tensorboard is unavailable. Continuing without logging.")
+            writer = None
+
     filt_baseline_acc = None
     if report_symbolic_baseline:
         print("\nComputing FilterAgent baseline accuracy...")
@@ -78,45 +112,25 @@ def train(
                 filt_total_samples += len(tgt["filter"])
         filt_baseline_acc = (filt_correct_total / filt_total_samples * 100) if filt_total_samples > 0 else 0.0
         print(f"FilterAgent (symbolic, 0 params): {filt_baseline_acc:.1f}%\n")
+        if writer is not None:
+            writer.add_scalar("symbolic/filter_baseline_acc_pct", filt_baseline_acc, 0)
 
-    # --- Training Loop ---
-    for epoch in range(1, epochs + 1):
-        # Train
-        backbone.train(); lna.train(); mixer.train(); if_amp.train()
-        train_loss = 0.0
+    try:
+        # --- Training Loop ---
+        for epoch in range(1, epochs + 1):
+            # Train
+            backbone.train(); lna.train(); mixer.train(); if_amp.train()
+            train_loss = 0.0
 
-        for (specs, mets, stft_raw), tgt in train_loader:
-            specs, mets = specs.to(device), mets.to(device)
-            tgt = {k: v.to(device) for k, v in tgt.items()}
-
-            z = backbone(specs, mets)
-            loss = (
-                ce(lna(z), tgt["lna"])
-                + mse(mixer(z), tgt["mixer_power"])
-                + mse(if_amp(z), tgt["if_amp"])
-            )
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-
-        train_loss /= len(train_loader)
-
-        # Validate
-        backbone.eval(); lna.eval(); mixer.eval(); if_amp.eval()
-        val_loss = 0.0
-        lna_correct = total = 0
-        mixer_ae_sum = ifamp_ae_sum = 0.0  # absolute error sums for regression
-        mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
-        mixer_tgt_sq_sum = ifamp_tgt_sq_sum = 0.0  # for R² calculation
-        mixer_tgt_sum = ifamp_tgt_sum = 0.0
-        center_freq_counts = [0, 0, 0]  # distribution of predicted centre freqs
-
-        with torch.no_grad():
-            for (specs, mets, stft_raw), tgt in val_loader:
+            for batch_idx, ((specs, mets, stft_raw), tgt) in enumerate(train_loader):
                 specs, mets = specs.to(device), mets.to(device)
                 tgt = {k: v.to(device) for k, v in tgt.items()}
+
+                if writer is not None and epoch == 1 and batch_idx == 0:
+                    try:
+                        writer.add_graph(backbone, (specs, mets))
+                    except Exception as exc:
+                        print(f"TensorBoard graph logging skipped: {exc}")
 
                 z = backbone(specs, mets)
                 loss = (
@@ -124,86 +138,141 @@ def train(
                     + mse(mixer(z), tgt["mixer_power"])
                     + mse(if_amp(z), tgt["if_amp"])
                 )
-                val_loss += loss.item()
 
-                lna_correct += (lna(z).argmax(1) == tgt["lna"]).sum().item()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
 
-                # Symbolic centre-frequency classification (coupled with filter decision)
-                # Note: FilterAgent predictions are computed but not stored (symbolic, fixed)
-                filt_preds = filt(stft_raw)
-                cf_preds = filt.last_center_freq_preds()
-                if cf_preds.numel() == 0:
-                    cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
-                for c in cf_preds.tolist():
-                    if 0 <= c < len(center_freq_counts):
-                        center_freq_counts[c] += 1
+            train_loss /= len(train_loader)
 
-                # Regression metrics (on normalized scale)
-                mixer_pred = mixer(z)
-                ifamp_pred = if_amp(z)
-                mixer_ae_sum += torch.abs(mixer_pred - tgt["mixer_power"]).sum().item()
-                ifamp_ae_sum += torch.abs(ifamp_pred - tgt["if_amp"]).sum().item()
-                mixer_se_sum += ((mixer_pred - tgt["mixer_power"]) ** 2).sum().item()
-                ifamp_se_sum += ((ifamp_pred - tgt["if_amp"]) ** 2).sum().item()
-                mixer_tgt_sum += tgt["mixer_power"].sum().item()
-                ifamp_tgt_sum += tgt["if_amp"].sum().item()
-                mixer_tgt_sq_sum += (tgt["mixer_power"] ** 2).sum().item()
-                ifamp_tgt_sq_sum += (tgt["if_amp"] ** 2).sum().item()
+            # Validate
+            backbone.eval(); lna.eval(); mixer.eval(); if_amp.eval()
+            val_loss = 0.0
+            lna_correct = total = 0
+            mixer_ae_sum = ifamp_ae_sum = 0.0  # absolute error sums for regression
+            mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
+            mixer_tgt_sq_sum = ifamp_tgt_sq_sum = 0.0  # for R² calculation
+            mixer_tgt_sum = ifamp_tgt_sum = 0.0
+            center_freq_counts = [0, 0, 0]  # distribution of predicted centre freqs
 
-                total += len(tgt["lna"])
+            with torch.no_grad():
+                for (specs, mets, stft_raw), tgt in val_loader:
+                    specs, mets = specs.to(device), mets.to(device)
+                    tgt = {k: v.to(device) for k, v in tgt.items()}
 
-        val_loss /= len(val_loader)
-        scheduler.step(val_loss)
+                    z = backbone(specs, mets)
+                    loss = (
+                        ce(lna(z), tgt["lna"])
+                        + mse(mixer(z), tgt["mixer_power"])
+                        + mse(if_amp(z), tgt["if_amp"])
+                    )
+                    val_loss += loss.item()
 
-        lna_acc = lna_correct / total * 100
+                    lna_correct += (lna(z).argmax(1) == tgt["lna"]).sum().item()
 
-        # R² score for regression agents (clamp to 0-100%)
-        mixer_tgt_var = mixer_tgt_sq_sum - (mixer_tgt_sum ** 2) / total
-        ifamp_tgt_var = ifamp_tgt_sq_sum - (ifamp_tgt_sum ** 2) / total
-        mixer_r2 = max(0.0, (1 - mixer_se_sum / (mixer_tgt_var + 1e-10))) * 100
-        ifamp_r2 = max(0.0, (1 - ifamp_se_sum / (ifamp_tgt_var + 1e-10))) * 100
+                    # Symbolic centre-frequency classification (coupled with filter decision)
+                    # Note: FilterAgent predictions are computed but not stored (symbolic, fixed)
+                    filt_preds = filt(stft_raw)
+                    cf_preds = filt.last_center_freq_preds()
+                    if cf_preds.numel() == 0:
+                        cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
+                    for c in cf_preds.tolist():
+                        if 0 <= c < len(center_freq_counts):
+                            center_freq_counts[c] += 1
 
-        mixer_mae = mixer_ae_sum / total
-        ifamp_mae = ifamp_ae_sum / total
+                    # Regression metrics (on normalized scale)
+                    mixer_pred = mixer(z)
+                    ifamp_pred = if_amp(z)
+                    mixer_ae_sum += torch.abs(mixer_pred - tgt["mixer_power"]).sum().item()
+                    ifamp_ae_sum += torch.abs(ifamp_pred - tgt["if_amp"]).sum().item()
+                    mixer_se_sum += ((mixer_pred - tgt["mixer_power"]) ** 2).sum().item()
+                    ifamp_se_sum += ((ifamp_pred - tgt["if_amp"]) ** 2).sum().item()
+                    mixer_tgt_sum += tgt["mixer_power"].sum().item()
+                    ifamp_tgt_sum += tgt["if_amp"].sum().item()
+                    mixer_tgt_sq_sum += (tgt["mixer_power"] ** 2).sum().item()
+                    ifamp_tgt_sq_sum += (tgt["if_amp"] ** 2).sum().item()
 
-        print(
-            f"Epoch {epoch:3d}/{epochs} | "
-            f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
-            f"LNA: {lna_acc:.1f}% | "
-            f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}% | "
-            f"CtrFreq: {center_freq_counts}"
-        )
+                    total += len(tgt["lna"])
 
-        # Save best
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save({
-                "backbone": backbone.state_dict(),
-                "lna": lna.state_dict(),
-                "mixer": mixer.state_dict(),
-                "if_amp": if_amp.state_dict(),
-            }, save_path / "best_model.pt")
-            joblib.dump(scalers, save_path / "scalers.joblib")
-            print(f"  -> Saved best model (val_loss={val_loss:.4f})")
+            val_loss /= len(val_loader)
+            scheduler.step(val_loss)
 
-    print(f"\nTraining complete! Best val loss: {best_val_loss:.4f}")
-    print(f"Model: {save_path / 'best_model.pt'}")
-    print(f"Scalers: {save_path / 'scalers.joblib'}")
-    print(f"\n{'='*60}")
-    print(f"FINAL VALIDATION METRICS (last epoch)")
-    print(f"{'='*60}")
-    print(f"  LNA Agent     (neural, classification):  {lna_acc:.1f}% accuracy")
-    if filt_baseline_acc is None:
-        print("  Filter Agent  (symbolic):               baseline not evaluated")
-    else:
-        print(f"  Filter Agent  (symbolic vs Bandwidth_Hz):      {filt_baseline_acc:.1f}% accuracy")
-    print(f"  Mixer Agent   (neural, LO power):        R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
-    print(f"  Mixer Agent   (symbolic, centre freq):   "
-          f"2405={center_freq_counts[0]}, "
-          f"2420={center_freq_counts[1]}, "
-          f"2435={center_freq_counts[2]} MHz")
-    print(f"  IF Amp Agent  (neural, regression):      R²={ifamp_r2:.1f}%  MAE={ifamp_mae:.3f}")
-    print(f"{'='*60}")
+            lna_acc = lna_correct / total * 100
+
+            # R² score for regression agents (clamp to 0-100%)
+            mixer_tgt_var = mixer_tgt_sq_sum - (mixer_tgt_sum ** 2) / total
+            ifamp_tgt_var = ifamp_tgt_sq_sum - (ifamp_tgt_sum ** 2) / total
+            mixer_r2 = max(0.0, (1 - mixer_se_sum / (mixer_tgt_var + 1e-10))) * 100
+            ifamp_r2 = max(0.0, (1 - ifamp_se_sum / (ifamp_tgt_var + 1e-10))) * 100
+
+            mixer_mae = mixer_ae_sum / total
+            ifamp_mae = ifamp_ae_sum / total
+
+            print(
+                f"Epoch {epoch:3d}/{epochs} | "
+                f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
+                f"LNA: {lna_acc:.1f}% | "
+                f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}% | "
+                f"CtrFreq: {center_freq_counts}"
+            )
+
+            if writer is not None:
+                learning_rate = optimizer.param_groups[0]["lr"]
+                writer.add_scalar("loss/train", train_loss, epoch)
+                writer.add_scalar("loss/val", val_loss, epoch)
+                writer.add_scalar("metrics/lna_acc_pct", lna_acc, epoch)
+                writer.add_scalar("metrics/mixer_r2_pct", mixer_r2, epoch)
+                writer.add_scalar("metrics/ifamp_r2_pct", ifamp_r2, epoch)
+                writer.add_scalar("metrics/mixer_mae", mixer_mae, epoch)
+                writer.add_scalar("metrics/ifamp_mae", ifamp_mae, epoch)
+                writer.add_scalar("optim/lr", learning_rate, epoch)
+                writer.add_scalar("symbolic/center_freq_count_2405", center_freq_counts[0], epoch)
+                writer.add_scalar("symbolic/center_freq_count_2420", center_freq_counts[1], epoch)
+                writer.add_scalar("symbolic/center_freq_count_2435", center_freq_counts[2], epoch)
+
+                for module_name, module in (
+                    ("backbone", backbone),
+                    ("lna", lna),
+                    ("mixer", mixer),
+                    ("if_amp", if_amp),
+                ):
+                    for param_name, param in module.named_parameters():
+                        writer.add_histogram(f"params/{module_name}.{param_name}", param, epoch)
+
+            # Save best
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save({
+                    "backbone": backbone.state_dict(),
+                    "lna": lna.state_dict(),
+                    "mixer": mixer.state_dict(),
+                    "if_amp": if_amp.state_dict(),
+                }, save_path / "best_model.pt")
+                joblib.dump(scalers, save_path / "scalers.joblib")
+                print(f"  -> Saved best model (val_loss={val_loss:.4f})")
+
+        print(f"\nTraining complete! Best val loss: {best_val_loss:.4f}")
+        print(f"Model: {save_path / 'best_model.pt'}")
+        print(f"Scalers: {save_path / 'scalers.joblib'}")
+        print(f"\n{'='*60}")
+        print(f"FINAL VALIDATION METRICS (last epoch)")
+        print(f"{'='*60}")
+        print(f"  LNA Agent     (neural, classification):  {lna_acc:.1f}% accuracy")
+        if filt_baseline_acc is None:
+            print("  Filter Agent  (symbolic):               baseline not evaluated")
+        else:
+            print(f"  Filter Agent  (symbolic vs Bandwidth_Hz):      {filt_baseline_acc:.1f}% accuracy")
+        print(f"  Mixer Agent   (neural, LO power):        R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
+        print(f"  Mixer Agent   (symbolic, centre freq):   "
+              f"2405={center_freq_counts[0]}, "
+              f"2420={center_freq_counts[1]}, "
+              f"2435={center_freq_counts[2]} MHz")
+        print(f"  IF Amp Agent  (neural, regression):      R²={ifamp_r2:.1f}%  MAE={ifamp_mae:.3f}")
+        print(f"{'='*60}")
+    finally:
+        if writer is not None:
+            writer.close()
 
 
 if __name__ == "__main__":
@@ -216,6 +285,16 @@ if __name__ == "__main__":
     parser.add_argument("--latent-dim", type=int, default=64)
     parser.add_argument("--save-dir", default="checkpoints")
     parser.add_argument(
+        "--tensorboard",
+        action="store_true",
+        help="Write TensorBoard event files for scalars, graph, and histograms.",
+    )
+    parser.add_argument(
+        "--tb-logdir",
+        default="runs/maars",
+        help="Root directory for TensorBoard event files.",
+    )
+    parser.add_argument(
         "--report-symbolic-baseline",
         action="store_true",
         help="Compute and print one-time symbolic FilterAgent accuracy on validation data.",
@@ -227,4 +306,6 @@ if __name__ == "__main__":
         epochs=args.epochs, batch_size=args.batch_size,
         lr=args.lr, latent_dim=args.latent_dim, save_dir=args.save_dir,
         report_symbolic_baseline=args.report_symbolic_baseline,
+        tensorboard=args.tensorboard,
+        tb_logdir=args.tb_logdir,
     )

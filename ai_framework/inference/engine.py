@@ -33,7 +33,17 @@ class RFInferenceEngine:
         self.config = config or InferenceConfig()
         self.device = self._resolve_device(device)
 
-        self.backbone = Backbone(latent_dim=latent_dim).to(self.device)
+        self.scalers = joblib.load(Path(scalers_path))
+        metrics_scaler = self.scalers["metrics"]
+        self.metric_columns = self.scalers.get(
+            "metric_columns",
+            ["Best_EVM_dB", "Measured_Power_Post_LNA_dBm", "Measured_Power_Post_PA_dBm"],
+        )
+        self.metrics_mean = np.asarray(metrics_scaler.mean_, dtype=np.float32)
+        self.metrics_scale = np.asarray(metrics_scaler.scale_, dtype=np.float32)
+        self.metrics_scale[self.metrics_scale == 0.0] = 1.0
+
+        self.backbone = Backbone(latent_dim=latent_dim, metric_dim=len(self.metric_columns)).to(self.device)
         self.lna = LNAAgent(latent_dim).to(self.device)
         self.mixer = MixerAgent(latent_dim).to(self.device)
         self.if_amp = IFAmpAgent(latent_dim).to(self.device)
@@ -48,12 +58,6 @@ class RFInferenceEngine:
         self.lna.eval()
         self.mixer.eval()
         self.if_amp.eval()
-
-        self.scalers = joblib.load(Path(scalers_path))
-        metrics_scaler = self.scalers["metrics"]
-        self.metrics_mean = np.asarray(metrics_scaler.mean_, dtype=np.float32)
-        self.metrics_scale = np.asarray(metrics_scaler.scale_, dtype=np.float32)
-        self.metrics_scale[self.metrics_scale == 0.0] = 1.0
 
     @staticmethod
     def _resolve_device(device: str) -> torch.device:
@@ -117,7 +121,17 @@ class RFInferenceEngine:
             raise ValueError("Only blind EVM mode is currently implemented.")
         evm_value = float(calculate_evm(iq_batch, reference_data=None, normalize=True).item())
 
-        metrics = np.array([[evm_value, float(power_lna_dbm), float(power_pa_dbm)]], dtype=np.float32)
+        # Build a schema-aware metric vector. Missing runtime fields fall back to
+        # training-set means (which normalizes to ~0 after scaling).
+        runtime_values = {
+            "Best_EVM_dB": float(evm_value),
+            "Measured_Power_Post_LNA_dBm": float(power_lna_dbm),
+            "Measured_Power_Post_PA_dBm": float(power_pa_dbm),
+        }
+        metrics = np.array(
+            [[runtime_values.get(col, float(self.metrics_mean[i])) for i, col in enumerate(self.metric_columns)]],
+            dtype=np.float32,
+        )
         metrics_norm = ((metrics - self.metrics_mean[None, :]) / self.metrics_scale[None, :]).astype(np.float32)
 
         spec_norm = self._zscore_spectrogram(spec)
@@ -205,7 +219,7 @@ class RFInferenceEngine:
             filter_class, center_class, sym_status = symbolic_coupled_filter_center_select(
                 stft_np,
                 sample_rate_hz=sr,
-                n_fft=2 * stft_np.shape[0],
+                n_fft=stft_np.shape[0],
                 threshold_db=self.config.threshold_db,
                 boundary_low_mhz=self.config.boundary_low_mhz,
                 boundary_high_mhz=self.config.boundary_high_mhz,

@@ -36,6 +36,17 @@ SOURCE_FILE_COLUMN = "STFT_Complex_File"
 OUTPUT_REAL_COLUMN = "stft_data_real"
 OUTPUT_IMAGINARY_COLUMN = "stft_data_imaginary"
 
+# Minimal schema used by training + inference-compatible inputs.
+REQUIRED_METADATA_COLUMNS = [
+    "Bandwidth_Hz",
+    "Optimal_LNA_Voltage_V",
+    "Optimal_IF_Gain_dB",
+    "Optimal_LO_Power_dBm",
+    "Best_EVM_dB",
+    "Measured_Power_Post_LNA_dBm",
+    "Measured_Power_Post_PA_dBm",
+]
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -141,8 +152,13 @@ def _write_outputs(rows: list[dict[str, str]], fieldnames: list[str], output_csv
             f"Expected {SOURCE_INLINE_COMPLEX_COLUMN!r} or {SOURCE_FILE_COLUMN!r} in source CSV"
         )
 
-    excluded = {SOURCE_INLINE_DATA_COLUMN, SOURCE_INLINE_COMPLEX_COLUMN, SOURCE_FILE_COLUMN}
-    metadata_fields = [name for name in fieldnames if name not in excluded]
+    missing_required = [name for name in REQUIRED_METADATA_COLUMNS if name not in fieldnames]
+    if missing_required:
+        raise ValueError(
+            f"Source CSV is missing required columns for training: {missing_required}"
+        )
+
+    metadata_fields = list(REQUIRED_METADATA_COLUMNS)
     output_fields = metadata_fields + [OUTPUT_REAL_COLUMN, OUTPUT_IMAGINARY_COLUMN]
 
     tmp_data_dir = STFT_DATA_DIR.parent / (STFT_DATA_DIR.name + "_tmp")
