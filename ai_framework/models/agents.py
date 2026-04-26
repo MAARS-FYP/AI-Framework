@@ -42,7 +42,11 @@ class FilterAgent:
 
     FILTER_NAMES = {0: "1MHz", 1: "10MHz", 2: "20MHz"}
 
-    def __init__(self):
+    def __init__(self, sample_rate_hz: float = 125e6, n_fft: int | None = None):
+        # Keep defaults aligned with the symbolic bandwidth boundaries.
+        # If n_fft is not provided, infer it from STFT frequency bins.
+        self.sample_rate_hz = sample_rate_hz
+        self.n_fft = n_fft
         self._last_center_freq_preds = None
         self._last_status = None
 
@@ -64,7 +68,12 @@ class FilterAgent:
         center_preds = []
         status = []
         for i in range(stft_np.shape[0]):
-            filt_cls, center_cls, state = symbolic_coupled_filter_center_select(stft_np[i])
+            n_fft = self.n_fft if self.n_fft is not None else int(stft_np[i].shape[0])
+            filt_cls, center_cls, state = symbolic_coupled_filter_center_select(
+                stft_np[i],
+                sample_rate_hz=self.sample_rate_hz,
+                n_fft=n_fft,
+            )
             preds.append(filt_cls)
             center_preds.append(center_cls)
             status.append(state)

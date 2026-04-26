@@ -34,6 +34,7 @@ def train(
     latent_dim=64,
     val_split=0.2,
     save_dir="checkpoints",
+    report_symbolic_baseline=True,
 ):
     device = get_device()
     print(f"Device: {device}")
@@ -65,6 +66,19 @@ def train(
     save_path.mkdir(parents=True, exist_ok=True)
     best_val_loss = float("inf")
 
+    filt_baseline_acc = None
+    if report_symbolic_baseline:
+        print("\nComputing FilterAgent baseline accuracy...")
+        filt_correct_total = 0
+        filt_total_samples = 0
+        with torch.no_grad():
+            for (_, _, stft_raw), tgt in val_loader:
+                filt_preds = filt(stft_raw)
+                filt_correct_total += (filt_preds == tgt["filter"].cpu()).sum().item()
+                filt_total_samples += len(tgt["filter"])
+        filt_baseline_acc = (filt_correct_total / filt_total_samples * 100) if filt_total_samples > 0 else 0.0
+        print(f"FilterAgent (symbolic, 0 params): {filt_baseline_acc:.1f}%\n")
+
     # --- Training Loop ---
     for epoch in range(1, epochs + 1):
         # Train
@@ -92,7 +106,7 @@ def train(
         # Validate
         backbone.eval(); lna.eval(); mixer.eval(); if_amp.eval()
         val_loss = 0.0
-        lna_correct = filt_correct = total = 0
+        lna_correct = total = 0
         mixer_ae_sum = ifamp_ae_sum = 0.0  # absolute error sums for regression
         mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
         mixer_tgt_sq_sum = ifamp_tgt_sq_sum = 0.0  # for R² calculation
@@ -114,11 +128,9 @@ def train(
 
                 lna_correct += (lna(z).argmax(1) == tgt["lna"]).sum().item()
 
-                # Symbolic filter prediction (runs on CPU, no grad needed)
-                filt_preds = filt(stft_raw)
-                filt_correct += (filt_preds == tgt["filter"].cpu()).sum().item()
-
                 # Symbolic centre-frequency classification (coupled with filter decision)
+                # Note: FilterAgent predictions are computed but not stored (symbolic, fixed)
+                filt_preds = filt(stft_raw)
                 cf_preds = filt.last_center_freq_preds()
                 if cf_preds.numel() == 0:
                     cf_preds = mixer.classify_center_freq(stft_raw, filt_preds)
@@ -144,7 +156,6 @@ def train(
         scheduler.step(val_loss)
 
         lna_acc = lna_correct / total * 100
-        filt_acc = filt_correct / total * 100
 
         # R² score for regression agents (clamp to 0-100%)
         mixer_tgt_var = mixer_tgt_sq_sum - (mixer_tgt_sum ** 2) / total
@@ -158,7 +169,7 @@ def train(
         print(
             f"Epoch {epoch:3d}/{epochs} | "
             f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
-            f"LNA: {lna_acc:.1f}% | Filter: {filt_acc:.1f}% | "
+            f"LNA: {lna_acc:.1f}% | "
             f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}% | "
             f"CtrFreq: {center_freq_counts}"
         )
@@ -182,7 +193,10 @@ def train(
     print(f"FINAL VALIDATION METRICS (last epoch)")
     print(f"{'='*60}")
     print(f"  LNA Agent     (neural, classification):  {lna_acc:.1f}% accuracy")
-    print(f"  Filter Agent  (symbolic vs Bandwidth_Hz):      {filt_acc:.1f}% accuracy")
+    if filt_baseline_acc is None:
+        print("  Filter Agent  (symbolic):               baseline not evaluated")
+    else:
+        print(f"  Filter Agent  (symbolic vs Bandwidth_Hz):      {filt_baseline_acc:.1f}% accuracy")
     print(f"  Mixer Agent   (neural, LO power):        R²={mixer_r2:.1f}%  MAE={mixer_mae:.3f}")
     print(f"  Mixer Agent   (symbolic, centre freq):   "
           f"2405={center_freq_counts[0]}, "
@@ -201,10 +215,16 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--latent-dim", type=int, default=64)
     parser.add_argument("--save-dir", default="checkpoints")
+    parser.add_argument(
+        "--report-symbolic-baseline",
+        action="store_true",
+        help="Compute and print one-time symbolic FilterAgent accuracy on validation data.",
+    )
     args = parser.parse_args()
 
     train(
         csv_path=args.csv, data_root=args.data_root,
         epochs=args.epochs, batch_size=args.batch_size,
         lr=args.lr, latent_dim=args.latent_dim, save_dir=args.save_dir,
+        report_symbolic_baseline=args.report_symbolic_baseline,
     )
