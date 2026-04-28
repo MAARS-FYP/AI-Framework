@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")" && .venv/bin/python -m http.server "${DASHBOARD_PORT:-8080}" >/tmp/rf_dashboard_http.log 2>&1 & .venv/bin/python udp_ws_bridge.py --udp-host "${UDP_HOST:-127.0.0.1}" --udp-port "${UDP_PORT:-9000}" --ws-host "${WS_HOST:-127.0.0.1}" --ws-port "${WS_PORT:-8765}" --ws-path "${WS_PATH:-/telemetry}" >/tmp/rf_dashboard_bridge.log 2>&1 & sleep 1 && open "http://127.0.0.1:${DASHBOARD_PORT:-8080}/index.html?ws=ws://127.0.0.1:${WS_PORT:-8765}${WS_PATH:-/telemetry}" && wait

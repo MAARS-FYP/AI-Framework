@@ -128,6 +128,7 @@ cargo run --release -- [options]
 
 Top-level flags:
 
+- `--mode <hardware|simulate|digital_twin>`: Operating mode. `hardware` uses real UART/ILA hardware; `simulate` runs synthetic data loops; `digital_twin` simulates the RF chain with optional AI agent chaining. Default: `hardware`.
 - `--ipc-mode <direct|shm>`: IPC mode used between Rust and the Python worker. Default: `direct`.
 - `--socket-path <path>`: Unix socket path for the Python inference worker. Default: `/tmp/maars_infer.sock`.
 - `--sample-rate-hz <float>`: Sample rate forwarded to the worker and used by Rust. Default: `25000000.0`.
@@ -142,6 +143,15 @@ Top-level flags:
 - `--dry-run-samples <int>`: Synthetic IQ sample count per dry-run cycle. Default: `4096`.
 - `--dry-run-power-lna <float>`: Synthetic LNA power in dBm. Default: `-35`.
 - `--dry-run-power-pa <float>`: Synthetic PA power in dBm. Default: `-22`.
+
+Digital Twin mode flags (used with `--mode digital_twin`):
+
+- `--rf-chain-socket-path <path>`: Unix socket path for the RF chain worker. Default: `/tmp/maars_rfchain.sock`.
+- `--rf-chain-cycles <int>`: Number of RF chain simulation cycles; `0` means run continuously. Default: `0`.
+- `--rf-chain-interval-ms <int>`: Delay between RF chain simulation cycles in milliseconds. Default: `100`.
+
+Hardware mode flags:
+
 - `--uart-port <path>`: UART device path. Default: `/dev/cu.usbmodem11203`.
 - `--uart-baud <int>`: UART baud rate. Default: `115200`.
 - `--ila-csv-path <path>`: ILA probe0 CSV path. Default: `./ila_probe0.csv`.
@@ -256,7 +266,7 @@ Usage:
 Launcher flags:
 
 - `--env-file <path>`: Load deployment variables from an environment file before the rest of the script runs. Default: `./.env` if present.
-- `--mode <hardware|simulate>`: Start the full hardware loop or the simulation loop.
+- `--mode <hardware|simulate|digital_twin>`: Start the full hardware loop, the simulation loop, or the digital twin RF chain simulation with dashboards.
 - `--ipc-mode <direct|shm>`: IPC mode passed to both Rust and the Python worker.
 - `--socket-path <path>`: Unix socket path for the inference worker. Default: `/tmp/maars_infer.sock`.
 - `--sample-rate-hz <float>`: Sample rate used by both the worker and Rust.
@@ -280,6 +290,9 @@ Launcher flags:
 - `--simulate-samples <int>`: Synthetic IQ samples per cycle in simulation mode.
 - `--simulate-power-lna <float>`: Synthetic LNA power in dBm.
 - `--simulate-power-pa <float>`: Synthetic PA power in dBm.
+- `--rf-chain-socket-path <path>`: Unix socket path for the RF chain worker used in digital_twin mode. Default: `/tmp/maars_rfchain.sock`.
+- `--rf-chain-cycles <int>`: Number of RF chain cycles in digital_twin mode. `0` means continuous. Default: `0`.
+- `--rf-chain-interval-ms <int>`: Delay between RF chain cycles in milliseconds. Default: `100`.
 - `--rust-cleanup-shm-on-exit`: Forward `--cleanup-shm-on-exit` to Rust.
 - `--enable-valon`: Force Valon worker and Rust Valon output on.
 - `--disable-valon`: Force Valon worker and Rust Valon output off.
@@ -297,6 +310,7 @@ Forwarding behavior:
 - Everything after `--` is forwarded to Rust unchanged as extra Rust arguments.
 - In hardware mode, the launcher passes UART and ILA CSV handshake settings to Rust.
 - In simulation mode, the launcher passes simulation-only values to Rust instead of hardware I/O settings.
+- In digital_twin mode, the launcher starts the RF chain worker, telemetry dashboards, and opens them in the browser.
 - The launcher starts the Python inference worker first, then the Valon worker when enabled, and then the Rust runtime.
 
 Examples:
@@ -304,8 +318,70 @@ Examples:
 ```bash
 ./run_full_system.sh --mode hardware --ipc-mode shm
 ./run_full_system.sh --mode simulate --ipc-mode shm --simulate-cycles 10
+./run_full_system.sh --mode digital_twin --rf-chain-cycles 0
 ./run_full_system.sh --mode hardware --ipc-mode direct -- --sample-rate-hz 25000000
 ```
+
+Digital Twin Mode Flags:
+
+When `--mode digital_twin` is set, the following additional flags are available:
+
+- `--rf-chain-socket-path <path>`: Unix socket path for the RF chain worker. Default: `/tmp/maars_rfchain.sock`.
+- `--rf-chain-cycles <int>`: Number of RF chain simulation cycles; `0` means run continuously. Default: `0`.
+- `--rf-chain-interval-ms <int>`: Delay between RF chain simulation cycles in milliseconds. Default: `100`.
+
+In digital_twin mode, the launcher automatically:
+- Starts the Python RF chain worker (Unix socket interface)
+- Launches the RF chain parameter control dashboard (Vue.js GUI on `file://`)
+- Launches the telemetry monitoring dashboard (HTTP server on `http://127.0.0.1:8080/`)
+- Opens both dashboards in your default web browser
+- Runs the Rust orchestrator which connects to the RF chain worker and generates random OFDM signals
+
+## Python RF Chain Worker
+
+Source: `ai_framework/inference/rf_chain_worker.py`
+
+Usage:
+
+```bash
+python -m ai_framework.inference.rf_chain_worker [options]
+```
+
+Flags:
+
+- `--socket-path <path>`: Unix socket path for the RF chain worker. Default: `/tmp/maars_rfchain.sock`.
+- `--seed <int>`: Random seed for reproducible OFDM generation. Default: not set (random).
+
+Notes:
+
+- This worker simulates an RF chain with LNA, mixer, filter, and PA stages.
+- It exposes a MAAR protocol interface over a Unix socket accepting MSG_RFCHAIN_REQ messages.
+- The worker generates random OFDM symbols internally and returns I/Q samples, EVM, and power measurements.
+- Port is controlled by parameter updates from the dashboard GUI or orchestrator.
+
+## Python RF Chain Dashboard Backend
+
+Source: `rf_chain_dashboard/app.py`
+
+Usage:
+
+```bash
+python rf_chain_dashboard/app.py [options]
+```
+
+Flags:
+
+- `--rfchain-socket <path>`: Unix socket path for the RF chain worker. Default: `/tmp/maars_rfchain.sock`.
+- `--inference-socket <path>`: Unix socket path for the inference worker (optional for AI recommendations). Default: `/tmp/maars_infer.sock`.
+- `--host <ip>`: WebSocket server bind address. Default: `127.0.0.1`.
+- `--port <int>`: WebSocket server listen port. Default: `8877`.
+
+Notes:
+
+- This is an async Python WebSocket server that bridges the GUI frontend to the RF chain worker.
+- The dashboard broadcasts real-time I/Q measurements, EVM, and power data to connected web clients.
+- Optional inference worker chaining enables AI agent recommendations for optimal RF parameters.
+- GUI parameter updates are sent back to the RF chain worker to generate new signals on demand.
 
 ## Bandwidth Extraction Test Utility
 

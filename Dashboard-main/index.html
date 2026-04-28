@@ -1,0 +1,1820 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      Multi-Agent Neurosymbolic AI for Self-Adapting RF Transceivers
+    </title>
+    <style>
+      :root {
+        --bg-0: #161616;
+        --bg-1: #1f2023;
+        --surface-0: #232426;
+        --surface-1: #2b2d31;
+        --surface-2: #33363d;
+        --border: #4a4e57;
+        --rf-block-0: #293245;
+        --rf-block-1: #252d3d;
+        --rf-border: #53607a;
+        --text-0: #d6dbe8;
+        --text-1: #aeb3bf;
+        --measure-surface: #1f2b27;
+        --measure-border: #446156;
+        --measure-accent: #7ea794;
+        --measure-line: #6f9584;
+        --control-surface: #302327;
+        --control-border: #7a4e53;
+        --control-accent: #b78187;
+        --control-line: #925d63;
+        --ok: #76a085;
+        --warn: #b59a6b;
+        --error: #bc7474;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+
+      body {
+        font-family: "Roboto", "Inter", "Segoe UI", sans-serif;
+        color: var(--text-0);
+        background:
+          radial-gradient(
+            1200px 700px at 20% -10%,
+            #2b2d31 0%,
+            transparent 62%
+          ),
+          radial-gradient(900px 700px at 92% 20%, #2a2b30 0%, transparent 58%),
+          linear-gradient(160deg, var(--bg-0), var(--bg-1));
+        overflow: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.22;
+        background-image: repeating-linear-gradient(
+          0deg,
+          rgba(255, 255, 255, 0.035) 0,
+          rgba(255, 255, 255, 0.035) 1px,
+          transparent 1px,
+          transparent 42px
+        );
+      }
+
+      .mono {
+        font-family:
+          "Roboto Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.03em;
+      }
+
+      .app-shell {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        min-height: 100%;
+      }
+
+      .topbar {
+        z-index: 4;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 14px 18px 12px;
+        border-bottom: 1px solid rgba(170, 175, 188, 0.2);
+        background: linear-gradient(
+          180deg,
+          rgba(34, 35, 40, 0.95),
+          rgba(28, 29, 34, 0.72)
+        );
+      }
+
+      .title-wrap h1 {
+        margin: 0;
+        font-size: clamp(1.02rem, 1vw + 0.8rem, 1.4rem);
+        letter-spacing: 0.04em;
+        font-weight: 600;
+      }
+
+      .status-wrap {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .chip {
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        padding: 6px 12px;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        min-width: 118px;
+        text-align: center;
+        background: var(--surface-1);
+      }
+
+      .chip[data-mode="LIVE"] {
+        border-color: rgba(118, 160, 133, 0.6);
+        color: #aac8b5;
+      }
+
+      .chip[data-mode="IDLE"] {
+        border-color: rgba(146, 152, 166, 0.62);
+        color: #bcc1ce;
+      }
+
+      .chip[data-mode="RETRY"] {
+        border-color: rgba(181, 154, 107, 0.6);
+        color: #d3c19a;
+      }
+
+      .chip[data-mode="ERROR"] {
+        border-color: rgba(188, 116, 116, 0.7);
+        color: #ddb0b0;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(5, auto);
+        gap: 10px;
+        align-items: center;
+      }
+
+      .meta-box {
+        border: 1px solid rgba(146, 152, 167, 0.3);
+        border-radius: 6px;
+        background: rgba(42, 44, 51, 0.86);
+        padding: 6px 8px;
+        min-width: 86px;
+      }
+
+      .meta-box .label {
+        display: block;
+        color: var(--text-1);
+        font-size: 0.66rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .meta-box .value {
+        display: block;
+        margin-top: 2px;
+        font-size: 0.9rem;
+      }
+
+      .diagram-stage {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        padding: 12px;
+      }
+
+      .diagram-canvas {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        min-height: 420px;
+        border: 1px solid rgba(150, 156, 172, 0.2);
+        border-radius: 8px;
+        background: linear-gradient(
+          180deg,
+          rgba(42, 44, 52, 0.34),
+          rgba(31, 33, 38, 0.28)
+        );
+        overflow: hidden;
+        animation: scene-enter 540ms ease-out both;
+      }
+
+      #connector-layer {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .connector {
+        fill: none;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.9;
+      }
+
+      .connector.measurement {
+        stroke: var(--measure-line);
+      }
+
+      .connector.control {
+        stroke: var(--control-line);
+      }
+
+      .hardware-chain {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        align-items: center;
+        z-index: 3;
+      }
+
+      .hw-block {
+        position: relative;
+        width: clamp(52px, 8vw, 150px);
+        height: clamp(72px, 10vh, 94px);
+        border: 1px solid var(--rf-border);
+        border-radius: 6px;
+        background: linear-gradient(
+          170deg,
+          var(--rf-block-0),
+          var(--rf-block-1)
+        );
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 8px;
+      }
+
+      .hw-block .name {
+        font-size: clamp(0.68rem, 0.3rem + 0.9vw, 0.9rem);
+        letter-spacing: 0.04em;
+      }
+
+      .flow-arrow {
+        width: clamp(14px, 1.9vw, 22px);
+        text-align: center;
+        color: #8b909b;
+        font-size: clamp(0.86rem, 1.2vw, 1.15rem);
+      }
+
+      .anchor-point {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .anchor-right {
+        right: -5px;
+        top: 50%;
+        transform: translate(50%, -50%);
+      }
+
+      .anchor-top {
+        top: -5px;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
+
+      .anchor-bottom {
+        bottom: -5px;
+        left: 50%;
+        transform: translate(-50%, 50%);
+      }
+
+      .panel {
+        position: absolute;
+        width: min(24vw, 270px);
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        padding: 10px 12px 11px;
+        background: var(--surface-2);
+        z-index: 4;
+        cursor: grab;
+        touch-action: none;
+        animation: panel-enter 420ms ease-out both;
+      }
+
+      .panel.dragging {
+        cursor: grabbing;
+      }
+
+      .panel.measurement {
+        background: linear-gradient(
+          170deg,
+          rgba(35, 46, 43, 0.95),
+          var(--measure-surface)
+        );
+        border-color: var(--measure-border);
+      }
+
+      .panel.control {
+        background: linear-gradient(
+          170deg,
+          rgba(61, 42, 47, 0.95),
+          var(--control-surface)
+        );
+        border-color: var(--control-border);
+      }
+
+      .panel:nth-of-type(1) {
+        animation-delay: 40ms;
+      }
+
+      .panel:nth-of-type(2) {
+        animation-delay: 80ms;
+      }
+
+      .panel:nth-of-type(3) {
+        animation-delay: 120ms;
+      }
+
+      .panel:nth-of-type(4) {
+        animation-delay: 160ms;
+      }
+
+      .panel:nth-of-type(5) {
+        animation-delay: 200ms;
+      }
+
+      .panel:nth-of-type(6) {
+        animation-delay: 240ms;
+      }
+
+      .panel:nth-of-type(7) {
+        animation-delay: 280ms;
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: clamp(0.78rem, 0.4rem + 0.65vw, 0.94rem);
+        font-weight: 600;
+        letter-spacing: 0.03em;
+      }
+
+      .kind {
+        font-size: 0.65rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-1);
+      }
+
+      .value-row {
+        margin-top: 7px;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+
+      .value-row .value {
+        font-size: clamp(1.02rem, 0.8rem + 0.7vw, 1.3rem);
+      }
+
+      .value-row .unit {
+        font-size: 0.73rem;
+        color: var(--text-1);
+      }
+
+      .subtle {
+        margin-top: 7px;
+        font-size: 0.69rem;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #a6a9b3;
+      }
+
+      .control-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-top: 8px;
+        gap: 8px;
+      }
+
+      .control-row .label {
+        color: var(--text-1);
+        font-size: 0.72rem;
+        letter-spacing: 0.04em;
+      }
+
+      .control-row .field {
+        font-size: 0.86rem;
+      }
+
+      .meter {
+        margin-top: 6px;
+      }
+
+      .meter-track {
+        width: 100%;
+        height: 8px;
+        border: 1px solid rgba(182, 151, 132, 0.38);
+        border-radius: 999px;
+        background: rgba(30, 25, 22, 0.72);
+        overflow: hidden;
+      }
+
+      .meter-fill {
+        height: 100%;
+        width: 0;
+        border-radius: 999px;
+        transition: width 80ms linear;
+      }
+
+      .panel.control .meter-fill {
+        background: linear-gradient(90deg, #855157, #ab6b72);
+      }
+
+      .meter-scale {
+        margin-top: 4px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.65rem;
+        color: #b5a0a4;
+      }
+
+      .spark-wrap {
+        margin-top: 7px;
+        border: 1px solid rgba(111, 149, 132, 0.42);
+        border-radius: 6px;
+        background: rgba(23, 30, 28, 0.72);
+        padding: 2px;
+      }
+
+      .sparkline {
+        width: 100%;
+        height: 58px;
+        display: block;
+      }
+
+      .sparkline.small {
+        height: 42px;
+      }
+
+      .option-bank {
+        margin-top: 8px;
+        display: grid;
+        gap: 6px;
+      }
+
+      .lna-bank {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .filter-bank {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .option-card {
+        border: 1px solid rgba(148, 108, 114, 0.44);
+        border-radius: 5px;
+        background: rgba(50, 36, 40, 0.56);
+        padding: 4px 5px;
+      }
+
+      .option-card svg {
+        width: 100%;
+        height: 27px;
+        display: block;
+      }
+
+      .option-card svg path,
+      .option-card svg polyline,
+      .option-card svg line,
+      .option-card svg rect {
+        stroke: rgba(181, 137, 141, 0.72);
+        fill: rgba(149, 95, 102, 0.2);
+        stroke-width: 1.4;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .option-label {
+        display: block;
+        margin-top: 1px;
+        font-size: 0.63rem;
+        text-align: center;
+        color: #c3a9ad;
+        letter-spacing: 0.03em;
+      }
+
+      .option-card.selected {
+        border-color: rgba(199, 149, 154, 0.85);
+        background: rgba(79, 50, 56, 0.68);
+      }
+
+      .option-card.selected .option-label {
+        color: #efd2d5;
+      }
+
+      .option-card.selected svg path,
+      .option-card.selected svg polyline,
+      .option-card.selected svg line,
+      .option-card.selected svg rect {
+        stroke: rgba(231, 188, 192, 0.95);
+        fill: rgba(204, 140, 147, 0.3);
+      }
+
+      #panel-lna-power {
+        left: 2.5%;
+        top: 12%;
+      }
+
+      #panel-ifamp-power {
+        right: 28%;
+        top: 12%;
+      }
+
+      #panel-evm {
+        right: 3.5%;
+        top: 10%;
+      }
+
+      #panel-lna-agent {
+        left: 16%;
+        bottom: 22%;
+      }
+
+      #panel-mixer-agent {
+        left: 34%;
+        bottom: 7%;
+      }
+
+      #panel-filter-agent {
+        right: 24%;
+        bottom: 9%;
+      }
+
+      #panel-ifamp-agent {
+        right: 5%;
+        bottom: 24%;
+      }
+
+      .panel-anchor-right {
+        right: -5px;
+        top: 50%;
+        transform: translate(50%, -50%);
+      }
+
+      .panel-anchor-left {
+        left: -5px;
+        top: 50%;
+        transform: translate(-50%, -50%);
+      }
+
+      .panel-anchor-top {
+        left: 50%;
+        top: -5px;
+        transform: translate(-50%, -50%);
+      }
+
+      .stale-indicator {
+        color: #bfa984;
+      }
+
+      @keyframes panel-enter {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes scene-enter {
+        from {
+          opacity: 0;
+        }
+
+        to {
+          opacity: 1;
+        }
+      }
+
+      @media (max-width: 1180px) {
+        .meta-grid {
+          grid-template-columns: repeat(3, auto);
+        }
+
+        .panel {
+          width: min(30vw, 240px);
+        }
+
+        #panel-lna-power {
+          top: 9%;
+          left: 2%;
+        }
+
+        #panel-ifamp-power {
+          top: 17%;
+          right: 22%;
+        }
+
+        #panel-evm {
+          top: 9%;
+          right: 2%;
+        }
+
+        #panel-lna-agent {
+          left: 8%;
+          bottom: 23%;
+        }
+
+        #panel-mixer-agent {
+          left: 29%;
+          bottom: 5%;
+        }
+
+        #panel-filter-agent {
+          right: 19%;
+          bottom: 7%;
+        }
+
+        #panel-ifamp-agent {
+          right: 2%;
+          bottom: 23%;
+        }
+      }
+
+      @media (max-width: 840px) {
+        .topbar {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .status-wrap {
+          justify-content: flex-start;
+        }
+
+        .meta-grid {
+          grid-template-columns: repeat(2, auto);
+        }
+
+        .panel {
+          width: min(44vw, 220px);
+        }
+
+        .hardware-chain {
+          top: 49%;
+        }
+
+        .flow-arrow {
+          width: clamp(8px, 1.2vw, 14px);
+        }
+
+        #panel-lna-power {
+          left: 1%;
+          top: 6%;
+        }
+
+        #panel-ifamp-power {
+          right: 12%;
+          top: 16%;
+        }
+
+        #panel-evm {
+          right: 1%;
+          top: 6%;
+        }
+
+        #panel-lna-agent {
+          left: 1%;
+          bottom: 19%;
+        }
+
+        #panel-mixer-agent {
+          left: 27%;
+          bottom: 3%;
+        }
+
+        #panel-filter-agent {
+          right: 27%;
+          bottom: 3%;
+        }
+
+        #panel-ifamp-agent {
+          right: 1%;
+          bottom: 19%;
+        }
+      }
+
+      @media (max-width: 600px) {
+        .diagram-stage {
+          padding: 8px;
+        }
+
+        .hw-block {
+          width: clamp(42px, 11vw, 74px);
+          height: clamp(62px, 8.6vh, 78px);
+          padding: 6px;
+        }
+
+        .hw-block .name {
+          font-size: 0.72rem;
+        }
+
+        .flow-arrow {
+          width: 6px;
+          font-size: 0.7rem;
+        }
+
+        #panel-ifamp-power {
+          right: 2%;
+          top: 31%;
+        }
+
+        .panel {
+          width: min(46vw, 205px);
+          padding: 8px 10px 10px;
+        }
+
+        .panel-head h2 {
+          font-size: 0.76rem;
+        }
+
+        .value-row .value {
+          font-size: 0.96rem;
+        }
+
+        .sparkline {
+          height: 50px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="title-wrap">
+          <h1>
+            Multi-Agent Neurosymbolic AI for Self-Adapting RF Transceivers
+          </h1>
+        </div>
+        <div class="status-wrap">
+          <div class="chip mono" id="source-chip" data-mode="IDLE">IDLE</div>
+          <div class="meta-grid">
+            <div class="meta-box">
+              <span class="label">Sequence</span>
+              <span class="value mono" id="meta-seq">0</span>
+            </div>
+            <div class="meta-box">
+              <span class="label">Status</span>
+              <span class="value mono" id="meta-status">0</span>
+            </div>
+            <div class="meta-box">
+              <span class="label">Latency</span>
+              <span class="value mono" id="meta-processing">0.00 ms</span>
+            </div>
+            <div class="meta-box">
+              <span class="label">Rate</span>
+              <span class="value mono" id="meta-rate">0 Hz</span>
+            </div>
+            <div class="meta-box">
+              <span class="label">Health</span>
+              <span class="value mono stale-indicator" id="meta-stale"
+                >STALE</span
+              >
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="diagram-stage">
+        <section class="diagram-canvas" id="diagram-canvas">
+          <svg id="connector-layer" aria-hidden="true"></svg>
+
+          <article class="panel measurement" id="panel-lna-power">
+            <div class="panel-head">
+              <h2>LNA Power Sensor</h2>
+              <span class="kind">Measurement</span>
+            </div>
+            <div class="value-row">
+              <span class="mono value" id="value-power-lna">--.-</span>
+              <span class="unit">dBm</span>
+            </div>
+            <div class="spark-wrap">
+              <canvas class="sparkline small" id="lna-sparkline"></canvas>
+            </div>
+            <div class="subtle">Connected to LNA output node</div>
+            <span
+              class="anchor-point panel-anchor-right"
+              id="anchor-panel-lna-power"
+            ></span>
+          </article>
+
+          <article class="panel measurement" id="panel-ifamp-power">
+            <div class="panel-head">
+              <h2>IF Amp Power Sensor</h2>
+              <span class="kind">Measurement</span>
+            </div>
+            <div class="value-row">
+              <span class="mono value" id="value-power-ifamp">--.-</span>
+              <span class="unit">dBm</span>
+            </div>
+            <div class="spark-wrap">
+              <canvas class="sparkline small" id="ifamp-sparkline"></canvas>
+            </div>
+            <div class="subtle">Connected to IF Amp output node</div>
+            <span
+              class="anchor-point panel-anchor-right"
+              id="anchor-panel-ifamp-power"
+            ></span>
+          </article>
+
+          <article class="panel measurement" id="panel-evm">
+            <div class="panel-head">
+              <h2>EVM / Signal Quality</h2>
+              <span class="kind">Measurement</span>
+            </div>
+            <div class="value-row">
+              <span class="mono value" id="value-evm">--.-</span>
+              <span class="unit">%</span>
+            </div>
+            <div class="spark-wrap">
+              <canvas class="sparkline" id="evm-sparkline"></canvas>
+            </div>
+            <div class="subtle">Connected to FPGA observer</div>
+            <span
+              class="anchor-point panel-anchor-left"
+              id="anchor-panel-evm"
+            ></span>
+          </article>
+
+          <article class="panel control" id="panel-lna-agent">
+            <div class="panel-head">
+              <h2>LNA Agent</h2>
+              <span class="kind">Control</span>
+            </div>
+            <div class="control-row">
+              <span class="label">Supply</span>
+              <span class="field mono" id="value-lna-class">--</span>
+            </div>
+            <div class="option-bank lna-bank" id="lna-bank">
+              <div class="option-card lna-option" data-lna-class="0">
+                <svg viewBox="0 0 84 28" aria-hidden="true">
+                  <line x1="8" y1="23" x2="76" y2="23"></line>
+                  <rect x="16" y="16" width="10" height="7"></rect>
+                  <rect x="33" y="14" width="10" height="9"></rect>
+                  <rect x="50" y="12" width="10" height="11"></rect>
+                </svg>
+                <span class="option-label mono">3.0V</span>
+              </div>
+              <div class="option-card lna-option" data-lna-class="1">
+                <svg viewBox="0 0 84 28" aria-hidden="true">
+                  <line x1="8" y1="23" x2="76" y2="23"></line>
+                  <rect x="16" y="13" width="10" height="10"></rect>
+                  <rect x="33" y="10" width="10" height="13"></rect>
+                  <rect x="50" y="7" width="10" height="16"></rect>
+                </svg>
+                <span class="option-label mono">5.0V</span>
+              </div>
+            </div>
+            <div class="subtle">AI voltage select command</div>
+            <span
+              class="anchor-point panel-anchor-top"
+              id="anchor-panel-lna-agent"
+            ></span>
+          </article>
+
+          <article class="panel control" id="panel-mixer-agent">
+            <div class="panel-head">
+              <h2>Mixer Agents</h2>
+              <span class="kind">Control</span>
+            </div>
+            <div class="control-row">
+              <span class="label">Center Class</span>
+              <span class="field mono" id="value-center-class">--</span>
+            </div>
+            <div class="control-row">
+              <span class="label">Mixer dBm</span>
+              <span class="field mono" id="value-mixer-dbm">--.-</span>
+            </div>
+            <div class="meter">
+              <div class="meter-track">
+                <div class="meter-fill" id="meter-mixer"></div>
+              </div>
+              <div class="meter-scale mono">
+                <span>-30</span>
+                <span>+15</span>
+              </div>
+            </div>
+            <span
+              class="anchor-point panel-anchor-top"
+              id="anchor-panel-mixer-agent"
+            ></span>
+          </article>
+
+          <article class="panel control" id="panel-filter-agent">
+            <div class="panel-head">
+              <h2>Filter Agent</h2>
+              <span class="kind">Control</span>
+            </div>
+            <div class="control-row">
+              <span class="label">Selected</span>
+              <span class="field mono" id="value-filter-class">--</span>
+            </div>
+            <div class="option-bank filter-bank" id="filter-bank">
+              <div class="option-card filter-option" data-filter-class="0">
+                <svg viewBox="0 0 84 28" aria-hidden="true">
+                  <path
+                    d="M4 23 H30 C36 23 39 9 42 9 C45 9 48 23 54 23 H80"
+                  ></path>
+                </svg>
+                <span class="option-label mono">1M</span>
+              </div>
+              <div class="option-card filter-option" data-filter-class="1">
+                <svg viewBox="0 0 84 28" aria-hidden="true">
+                  <path
+                    d="M4 23 H22 C30 23 35 12 42 12 C49 12 54 23 62 23 H80"
+                  ></path>
+                </svg>
+                <span class="option-label mono">10M</span>
+              </div>
+              <div class="option-card filter-option" data-filter-class="2">
+                <svg viewBox="0 0 84 28" aria-hidden="true">
+                  <path
+                    d="M4 23 H14 C24 23 32 14 42 14 C52 14 60 23 70 23 H80"
+                  ></path>
+                </svg>
+                <span class="option-label mono">20M</span>
+              </div>
+            </div>
+            <div class="subtle">Bandwidth routing policy</div>
+            <span
+              class="anchor-point panel-anchor-top"
+              id="anchor-panel-filter-agent"
+            ></span>
+          </article>
+
+          <article class="panel control" id="panel-ifamp-agent">
+            <div class="panel-head">
+              <h2>IF Amp Agent</h2>
+              <span class="kind">Control</span>
+            </div>
+            <div class="control-row">
+              <span class="label">IF Amp dB</span>
+              <span class="field mono" id="value-ifamp-db">--.-</span>
+            </div>
+            <div class="meter">
+              <div class="meter-track">
+                <div class="meter-fill" id="meter-ifamp"></div>
+              </div>
+              <div class="meter-scale mono">
+                <span>-10</span>
+                <span>+30</span>
+              </div>
+            </div>
+            <span
+              class="anchor-point panel-anchor-top"
+              id="anchor-panel-ifamp-agent"
+            ></span>
+          </article>
+
+          <section class="hardware-chain" aria-label="RF receiver chain">
+            <div class="hw-block" id="hw-antenna">
+              <span class="name">Antenna</span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-lna">
+              <span class="name">LNA</span>
+              <span
+                class="anchor-point anchor-right"
+                id="anchor-lna-out"
+              ></span>
+              <span
+                class="anchor-point anchor-bottom"
+                id="anchor-lna-bottom"
+              ></span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-mixer">
+              <span class="name">Mixer &amp; LO</span>
+              <span
+                class="anchor-point anchor-bottom"
+                id="anchor-mixer-bottom"
+              ></span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-filter">
+              <span class="name">Filter</span>
+              <span
+                class="anchor-point anchor-bottom"
+                id="anchor-filter-bottom"
+              ></span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-ifamp">
+              <span class="name">IF Amp</span>
+              <span
+                class="anchor-point anchor-right"
+                id="anchor-ifamp-out"
+              ></span>
+              <span
+                class="anchor-point anchor-bottom"
+                id="anchor-ifamp-bottom"
+              ></span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-adc">
+              <span class="name">ADC</span>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&#8594;</div>
+
+            <div class="hw-block" id="hw-fpga">
+              <span class="name">FPGA</span>
+              <span class="anchor-point anchor-top" id="anchor-fpga-top"></span>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const LNA_CLASS_MAP = {
+          0: "3.0V",
+          1: "5.0V",
+        };
+
+        const FILTER_CLASS_MAP = {
+          0: "1 MHz",
+          1: "10 MHz",
+          2: "20 MHz",
+        };
+
+        const CENTER_CLASS_MAP = {
+          0: "2405 MHz",
+          1: "2420 MHz",
+          2: "2435 MHz",
+        };
+
+        const RANGE_MIXER_DBM = { min: -30, max: 15 };
+        const RANGE_IFAMP_DB = { min: -10, max: 30 };
+        const PANEL_STORAGE_KEY = "rf-dashboard-panel-positions-v1";
+
+        const connectorDefs = [
+          {
+            id: "conn-lna-power",
+            from: "anchor-panel-lna-power",
+            to: "anchor-lna-out",
+            kind: "measurement",
+          },
+          {
+            id: "conn-ifamp-power",
+            from: "anchor-panel-ifamp-power",
+            to: "anchor-ifamp-out",
+            kind: "measurement",
+          },
+          {
+            id: "conn-evm",
+            from: "anchor-panel-evm",
+            to: "anchor-fpga-top",
+            kind: "measurement",
+          },
+          {
+            id: "conn-lna-agent",
+            from: "anchor-panel-lna-agent",
+            to: "anchor-lna-bottom",
+            kind: "control",
+          },
+          {
+            id: "conn-mixer-agent",
+            from: "anchor-panel-mixer-agent",
+            to: "anchor-mixer-bottom",
+            kind: "control",
+          },
+          {
+            id: "conn-filter-agent",
+            from: "anchor-panel-filter-agent",
+            to: "anchor-filter-bottom",
+            kind: "control",
+          },
+          {
+            id: "conn-ifamp-agent",
+            from: "anchor-panel-ifamp-agent",
+            to: "anchor-ifamp-bottom",
+            kind: "control",
+          },
+        ];
+
+        const dom = {
+          canvas: document.getElementById("diagram-canvas"),
+          connectorLayer: document.getElementById("connector-layer"),
+          sourceChip: document.getElementById("source-chip"),
+          seq: document.getElementById("meta-seq"),
+          status: document.getElementById("meta-status"),
+          processing: document.getElementById("meta-processing"),
+          rate: document.getElementById("meta-rate"),
+          stale: document.getElementById("meta-stale"),
+          powerLna: document.getElementById("value-power-lna"),
+          powerIfamp: document.getElementById("value-power-ifamp"),
+          evm: document.getElementById("value-evm"),
+          lnaClass: document.getElementById("value-lna-class"),
+          centerClass: document.getElementById("value-center-class"),
+          mixerDbm: document.getElementById("value-mixer-dbm"),
+          filterClass: document.getElementById("value-filter-class"),
+          ifampDb: document.getElementById("value-ifamp-db"),
+          meterMixer: document.getElementById("meter-mixer"),
+          meterIfamp: document.getElementById("meter-ifamp"),
+          sparkEvm: document.getElementById("evm-sparkline"),
+          sparkLna: document.getElementById("lna-sparkline"),
+          sparkIfamp: document.getElementById("ifamp-sparkline"),
+          lnaOptions: Array.from(document.querySelectorAll(".lna-option")),
+          filterOptions: Array.from(
+            document.querySelectorAll(".filter-option"),
+          ),
+        };
+
+        const sparkContexts = {
+          evm: dom.sparkEvm.getContext("2d"),
+          lna: dom.sparkLna.getContext("2d"),
+          ifamp: dom.sparkIfamp.getContext("2d"),
+        };
+
+        const state = {
+          pendingPayload: null,
+          renderTicket: 0,
+          lastTelemetryAt: 0,
+          arrivalWindow: [],
+          evmHistory: [],
+          lnaPowerHistory: [],
+          ifampPowerHistory: [],
+          maxSparkPoints: 72,
+          wsUrl: getWebSocketUrl(),
+          ws: null,
+          reconnectTimer: null,
+          reconnectAttempts: 0,
+          panelPositions: loadPanelPositions(),
+        };
+
+        const connectorPaths = {};
+
+        initialize();
+
+        function initialize() {
+          buildConnectorPaths();
+          restorePanelPositions();
+          refreshConnectorLayout();
+          enablePanelDragging();
+          installObservers();
+          startTelemetryTransport();
+          window.setInterval(updateStaleState, 220);
+          updateStaleState();
+        }
+
+        function getWebSocketUrl() {
+          const params = new URLSearchParams(window.location.search);
+          return params.get("ws") || window.RF_DASHBOARD_WS_URL || "";
+        }
+
+        function loadPanelPositions() {
+          try {
+            const raw = window.localStorage.getItem(PANEL_STORAGE_KEY);
+            if (!raw) {
+              return {};
+            }
+
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === "object" ? parsed : {};
+          } catch (_error) {
+            return {};
+          }
+        }
+
+        function persistPanelPositions() {
+          try {
+            window.localStorage.setItem(
+              PANEL_STORAGE_KEY,
+              JSON.stringify(state.panelPositions),
+            );
+          } catch (_error) {
+            return;
+          }
+        }
+
+        function savePanelPosition(panel) {
+          const canvasRect = dom.canvas.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          const availableX = Math.max(1, canvasRect.width - panelRect.width);
+          const availableY = Math.max(1, canvasRect.height - panelRect.height);
+
+          state.panelPositions[panel.id] = {
+            x: clamp((panelRect.left - canvasRect.left) / availableX, 0, 1),
+            y: clamp((panelRect.top - canvasRect.top) / availableY, 0, 1),
+          };
+
+          persistPanelPositions();
+        }
+
+        function restorePanelPositions() {
+          const canvasRect = dom.canvas.getBoundingClientRect();
+          const panels = document.querySelectorAll(".panel");
+
+          for (const panel of panels) {
+            const saved = state.panelPositions[panel.id];
+            if (!saved) {
+              continue;
+            }
+
+            const availableX = Math.max(
+              1,
+              canvasRect.width - panel.offsetWidth,
+            );
+            const availableY = Math.max(
+              1,
+              canvasRect.height - panel.offsetHeight,
+            );
+            const nextLeft = clamp(Number(saved.x), 0, 1) * availableX;
+            const nextTop = clamp(Number(saved.y), 0, 1) * availableY;
+
+            panel.style.right = "auto";
+            panel.style.bottom = "auto";
+            panel.style.left = nextLeft.toFixed(1) + "px";
+            panel.style.top = nextTop.toFixed(1) + "px";
+          }
+        }
+
+        function enablePanelDragging() {
+          const panels = document.querySelectorAll(".panel");
+
+          for (const panel of panels) {
+            panel.addEventListener("pointerdown", onPanelPointerDown);
+          }
+        }
+
+        function onPanelPointerDown(event) {
+          if (event.button !== undefined && event.button !== 0) {
+            return;
+          }
+
+          const panel = event.currentTarget;
+          const initialCanvasRect = dom.canvas.getBoundingClientRect();
+          const panelRect = panel.getBoundingClientRect();
+          const offsetX = event.clientX - panelRect.left;
+          const offsetY = event.clientY - panelRect.top;
+
+          panel.style.right = "auto";
+          panel.style.bottom = "auto";
+          panel.style.left = panelRect.left - initialCanvasRect.left + "px";
+          panel.style.top = panelRect.top - initialCanvasRect.top + "px";
+          panel.classList.add("dragging");
+          panel.setPointerCapture(event.pointerId);
+
+          const moveHandler = (moveEvent) => {
+            const canvasRect = dom.canvas.getBoundingClientRect();
+            const maxLeft = Math.max(0, canvasRect.width - panel.offsetWidth);
+            const maxTop = Math.max(0, canvasRect.height - panel.offsetHeight);
+            const nextLeft = clamp(
+              moveEvent.clientX - canvasRect.left - offsetX,
+              0,
+              maxLeft,
+            );
+            const nextTop = clamp(
+              moveEvent.clientY - canvasRect.top - offsetY,
+              0,
+              maxTop,
+            );
+
+            panel.style.left = nextLeft.toFixed(1) + "px";
+            panel.style.top = nextTop.toFixed(1) + "px";
+            refreshConnectorLayout();
+          };
+
+          const endHandler = () => {
+            panel.classList.remove("dragging");
+            panel.removeEventListener("pointermove", moveHandler);
+            panel.removeEventListener("pointerup", endHandler);
+            panel.removeEventListener("pointercancel", endHandler);
+            savePanelPosition(panel);
+            refreshConnectorLayout();
+          };
+
+          panel.addEventListener("pointermove", moveHandler);
+          panel.addEventListener("pointerup", endHandler);
+          panel.addEventListener("pointercancel", endHandler);
+          event.preventDefault();
+        }
+
+        function installObservers() {
+          window.addEventListener("resize", () => {
+            restorePanelPositions();
+            resizeAllSparklines();
+            drawAllSparklines();
+            refreshConnectorLayout();
+          });
+
+          if (typeof ResizeObserver !== "undefined") {
+            const ro = new ResizeObserver(() => {
+              restorePanelPositions();
+              refreshConnectorLayout();
+            });
+            ro.observe(dom.canvas);
+          }
+
+          if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(() => {
+              restorePanelPositions();
+              resizeAllSparklines();
+              drawAllSparklines();
+              refreshConnectorLayout();
+            });
+          }
+
+          resizeAllSparklines();
+          drawAllSparklines();
+        }
+
+        function buildConnectorPaths() {
+          const fragment = document.createDocumentFragment();
+          for (const def of connectorDefs) {
+            const path = document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "path",
+            );
+            path.setAttribute("class", "connector " + def.kind);
+            path.setAttribute("id", def.id);
+            fragment.appendChild(path);
+            connectorPaths[def.id] = path;
+          }
+          dom.connectorLayer.appendChild(fragment);
+        }
+
+        function refreshConnectorLayout() {
+          const canvasRect = dom.canvas.getBoundingClientRect();
+          const width = Math.max(1, Math.round(canvasRect.width));
+          const height = Math.max(1, Math.round(canvasRect.height));
+
+          dom.connectorLayer.setAttribute(
+            "viewBox",
+            "0 0 " + width + " " + height,
+          );
+
+          for (const def of connectorDefs) {
+            const path = connectorPaths[def.id];
+            const start = getAnchorPoint(def.from, canvasRect);
+            const end = getAnchorPoint(def.to, canvasRect);
+
+            if (!path || !start || !end) {
+              continue;
+            }
+
+            path.setAttribute("d", createCurvePath(start, end));
+          }
+        }
+
+        function getAnchorPoint(id, containerRect) {
+          const node = document.getElementById(id);
+          if (!node) {
+            return null;
+          }
+
+          const rect = node.getBoundingClientRect();
+          return {
+            x: rect.left + rect.width / 2 - containerRect.left,
+            y: rect.top + rect.height / 2 - containerRect.top,
+          };
+        }
+
+        function createCurvePath(start, end) {
+          const dx = end.x - start.x;
+          const dy = end.y - start.y;
+
+          if (Math.abs(dx) >= Math.abs(dy)) {
+            const bend = Math.max(24, Math.min(170, Math.abs(dx) * 0.45));
+            const dir = dx === 0 ? 1 : Math.sign(dx);
+            const c1x = start.x + bend * dir;
+            const c2x = end.x - bend * dir;
+            return [
+              "M",
+              toFixed1(start.x),
+              toFixed1(start.y),
+              "C",
+              toFixed1(c1x),
+              toFixed1(start.y),
+              toFixed1(c2x),
+              toFixed1(end.y),
+              toFixed1(end.x),
+              toFixed1(end.y),
+            ].join(" ");
+          }
+
+          const bend = Math.max(20, Math.min(130, Math.abs(dy) * 0.55));
+          const dir = dy === 0 ? 1 : Math.sign(dy);
+          const c1y = start.y + bend * dir;
+          const c2y = end.y - bend * dir;
+          return [
+            "M",
+            toFixed1(start.x),
+            toFixed1(start.y),
+            "C",
+            toFixed1(start.x),
+            toFixed1(c1y),
+            toFixed1(end.x),
+            toFixed1(c2y),
+            toFixed1(end.x),
+            toFixed1(end.y),
+          ].join(" ");
+        }
+
+        function toFixed1(value) {
+          return value.toFixed(1);
+        }
+
+        function startTelemetryTransport() {
+          if (!state.wsUrl) {
+            setSourceMode("IDLE");
+            return;
+          }
+
+          connectWebSocket();
+        }
+
+        function connectWebSocket() {
+          clearTimeout(state.reconnectTimer);
+          setSourceMode("RETRY");
+
+          let socket;
+          try {
+            socket = new WebSocket(state.wsUrl);
+          } catch (_error) {
+            setSourceMode("ERROR");
+            scheduleReconnect();
+            return;
+          }
+
+          state.ws = socket;
+
+          socket.addEventListener("open", () => {
+            setSourceMode("LIVE");
+            state.reconnectAttempts = 0;
+          });
+
+          socket.addEventListener("message", (event) => {
+            const payload = parsePayload(event.data);
+            if (payload) {
+              queueTelemetry(payload);
+            }
+          });
+
+          socket.addEventListener("close", () => {
+            setSourceMode("RETRY");
+            scheduleReconnect();
+          });
+
+          socket.addEventListener("error", () => {
+            if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+              return;
+            }
+
+            setSourceMode("ERROR");
+            scheduleReconnect();
+          });
+        }
+
+        function parsePayload(raw) {
+          if (typeof raw !== "string") {
+            return null;
+          }
+
+          try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === "object" ? parsed : null;
+          } catch (_error) {
+            return null;
+          }
+        }
+
+        function scheduleReconnect() {
+          if (!state.wsUrl) {
+            return;
+          }
+
+          const waitMs = Math.min(10000, 1200 + state.reconnectAttempts * 1100);
+          state.reconnectAttempts += 1;
+          state.reconnectTimer = window.setTimeout(connectWebSocket, waitMs);
+        }
+
+        function clamp(value, min, max) {
+          return Math.min(max, Math.max(min, value));
+        }
+
+        function queueTelemetry(payload) {
+          state.pendingPayload = payload;
+          if (!state.renderTicket) {
+            state.renderTicket = requestAnimationFrame(flushTelemetry);
+          }
+        }
+
+        function flushTelemetry() {
+          state.renderTicket = 0;
+
+          const payload = state.pendingPayload;
+          state.pendingPayload = null;
+          if (!payload) {
+            return;
+          }
+
+          renderTelemetry(payload);
+        }
+
+        function renderTelemetry(payload) {
+          state.lastTelemetryAt = performance.now();
+          updateArrivalRate(state.lastTelemetryAt, true);
+
+          const seqId = toNumber(payload.seq_id);
+          const statusCode = toNumber(payload.status_code);
+          const lnaClass = toNumber(payload.lna_class);
+          const filterClass = toNumber(payload.filter_class);
+          const centerClass = toNumber(payload.center_class);
+
+          dom.seq.textContent = Number.isFinite(seqId)
+            ? String(Math.trunc(seqId))
+            : "-";
+          dom.status.textContent = Number.isFinite(statusCode)
+            ? String(Math.trunc(statusCode))
+            : "-";
+          dom.processing.textContent = formatFixed(
+            payload.processing_time_ms,
+            2,
+            " ms",
+          );
+
+          dom.powerLna.textContent = formatFixed(payload.power_lna_raw, 1);
+          dom.powerIfamp.textContent = formatFixed(payload.power_pa_raw, 1);
+          dom.evm.textContent = formatFixed(payload.evm_value, 2);
+
+          dom.lnaClass.textContent = lookupLabel(LNA_CLASS_MAP, lnaClass);
+          dom.filterClass.textContent = lookupLabel(
+            FILTER_CLASS_MAP,
+            filterClass,
+          );
+          dom.centerClass.textContent = lookupLabel(
+            CENTER_CLASS_MAP,
+            centerClass,
+          );
+
+          dom.mixerDbm.textContent = formatFixed(payload.mixer_dbm, 1);
+          dom.ifampDb.textContent = formatFixed(payload.ifamp_db, 1);
+
+          setMeter(dom.meterMixer, payload.mixer_dbm, RANGE_MIXER_DBM);
+          setMeter(dom.meterIfamp, payload.ifamp_db, RANGE_IFAMP_DB);
+
+          updateLnaSelection(lnaClass);
+          updateFilterSelection(filterClass);
+
+          addHistorySample(state.lnaPowerHistory, payload.power_lna_raw);
+          addHistorySample(state.ifampPowerHistory, payload.power_pa_raw);
+          addHistorySample(state.evmHistory, payload.evm_value);
+          drawAllSparklines();
+
+          updateStatusStyling(statusCode);
+          updateStaleState();
+        }
+
+        function updateArrivalRate(nowMs, hasSample = false) {
+          if (hasSample) {
+            state.arrivalWindow.push(nowMs);
+          }
+
+          while (
+            state.arrivalWindow.length &&
+            state.arrivalWindow[0] < nowMs - 1000
+          ) {
+            state.arrivalWindow.shift();
+          }
+
+          dom.rate.textContent = state.arrivalWindow.length + " Hz";
+        }
+
+        function toNumber(value) {
+          const num = Number(value);
+          return Number.isFinite(num) ? num : NaN;
+        }
+
+        function formatFixed(value, precision, suffix = "") {
+          const num = toNumber(value);
+          return Number.isFinite(num) ? num.toFixed(precision) + suffix : "--";
+        }
+
+        function lookupLabel(map, key) {
+          if (!Number.isFinite(key)) {
+            return "N/A";
+          }
+
+          if (Object.prototype.hasOwnProperty.call(map, key)) {
+            return map[key];
+          }
+
+          return "Unknown (" + key + ")";
+        }
+
+        function setMeter(node, rawValue, range) {
+          const value = toNumber(rawValue);
+          if (!Number.isFinite(value)) {
+            node.style.width = "0%";
+            return;
+          }
+
+          const normalized = (value - range.min) / (range.max - range.min);
+          const clamped = clamp(normalized, 0, 1);
+          node.style.width = (clamped * 100).toFixed(1) + "%";
+        }
+
+        function updateStatusStyling(statusCode) {
+          if (!Number.isFinite(statusCode)) {
+            dom.status.style.color = "var(--text-0)";
+            return;
+          }
+
+          if (statusCode === 0) {
+            dom.status.style.color = "var(--ok)";
+            return;
+          }
+
+          if (statusCode === 1) {
+            dom.status.style.color = "var(--warn)";
+            return;
+          }
+
+          dom.status.style.color = "var(--error)";
+        }
+
+        function setSourceMode(mode) {
+          dom.sourceChip.dataset.mode = mode;
+          dom.sourceChip.textContent = mode;
+        }
+
+        function updateStaleState() {
+          const now = performance.now();
+          updateArrivalRate(now, false);
+
+          const stale = now - state.lastTelemetryAt > 1200;
+          dom.stale.textContent = stale ? "STALE" : "LIVE";
+          dom.stale.style.color = stale ? "#bfa984" : "var(--ok)";
+        }
+
+        function addHistorySample(history, value) {
+          const numeric = toNumber(value);
+          if (!Number.isFinite(numeric)) {
+            return;
+          }
+
+          history.push(numeric);
+          if (history.length > state.maxSparkPoints) {
+            history.shift();
+          }
+        }
+
+        function updateLnaSelection(lnaClass) {
+          setOptionSelection(dom.lnaOptions, "lnaClass", lnaClass);
+        }
+
+        function updateFilterSelection(filterClass) {
+          setOptionSelection(dom.filterOptions, "filterClass", filterClass);
+        }
+
+        function setOptionSelection(optionNodes, dataKey, selectedValue) {
+          for (const node of optionNodes) {
+            const classValue = Number(node.dataset[dataKey]);
+            const isSelected =
+              Number.isFinite(selectedValue) && classValue === selectedValue;
+            node.classList.toggle("selected", isSelected);
+          }
+        }
+
+        function resizeSparklineCanvas(canvas, ctx) {
+          const dpr = window.devicePixelRatio || 1;
+          const cssWidth = Math.max(1, canvas.clientWidth);
+          const cssHeight = Math.max(1, canvas.clientHeight);
+          const targetWidth = Math.round(cssWidth * dpr);
+          const targetHeight = Math.round(cssHeight * dpr);
+
+          if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+          }
+
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function resizeAllSparklines() {
+          resizeSparklineCanvas(dom.sparkLna, sparkContexts.lna);
+          resizeSparklineCanvas(dom.sparkIfamp, sparkContexts.ifamp);
+          resizeSparklineCanvas(dom.sparkEvm, sparkContexts.evm);
+        }
+
+        function drawAllSparklines() {
+          drawSparklineSeries(
+            dom.sparkLna,
+            sparkContexts.lna,
+            state.lnaPowerHistory,
+            {
+              minHint: -45,
+              maxHint: -20,
+              stroke: "#8eb49f",
+              baseline: "rgba(107, 142, 126, 0.34)",
+            },
+          );
+
+          drawSparklineSeries(
+            dom.sparkIfamp,
+            sparkContexts.ifamp,
+            state.ifampPowerHistory,
+            {
+              minHint: -35,
+              maxHint: -10,
+              stroke: "#8eb49f",
+              baseline: "rgba(107, 142, 126, 0.34)",
+            },
+          );
+
+          drawSparklineSeries(
+            dom.sparkEvm,
+            sparkContexts.evm,
+            state.evmHistory,
+            {
+              minHint: 0.4,
+              maxHint: 8.5,
+              stroke: "#8db7a4",
+              baseline: "rgba(107, 142, 126, 0.38)",
+            },
+          );
+        }
+
+        function drawSparklineSeries(canvas, ctx, history, options) {
+          resizeSparklineCanvas(canvas, ctx);
+
+          const width = canvas.clientWidth;
+          const height = canvas.clientHeight;
+          ctx.clearRect(0, 0, width, height);
+
+          ctx.strokeStyle = options.baseline;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, height * 0.72);
+          ctx.lineTo(width, height * 0.72);
+          ctx.stroke();
+
+          if (history.length < 2) {
+            return;
+          }
+
+          let min = options.minHint;
+          let max = options.maxHint;
+          for (const sample of history) {
+            if (sample < min) {
+              min = sample;
+            }
+            if (sample > max) {
+              max = sample;
+            }
+          }
+
+          const range = Math.max(0.5, max - min);
+          const count = history.length;
+
+          ctx.strokeStyle = options.stroke;
+          ctx.lineWidth = 1.35;
+          ctx.beginPath();
+
+          for (let i = 0; i < count; i += 1) {
+            const x = (i / (count - 1)) * (width - 1);
+            const normalized = (history[i] - min) / range;
+            const y = height - normalized * (height - 4) - 2;
+
+            if (i === 0) {
+              ctx.moveTo(x, y);
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+
+          ctx.stroke();
+        }
+      })();
+    </script>
+  </body>
+</html>

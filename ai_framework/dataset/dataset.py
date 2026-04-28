@@ -32,7 +32,19 @@ class RFDataset(Dataset):
         # Classification targets
         self.lna_targets = (df["Optimal_LNA_Voltage_V"] > 4.0).astype(int).values # Binary classification: 3V vs 5V
         self.filter_targets = df["Bandwidth_Hz"].map(SIGNAL_BW_CLASS_MAP).values
-        self.stft_files = df["STFT_Complex_File"].values
+
+        if "STFT_Complex_File" in df.columns:
+            self.stft_files = df["STFT_Complex_File"].values
+            self.stft_kind = "complex"
+        elif {"stft_data_real", "stft_data_imaginary"}.issubset(df.columns):
+            self.stft_files_real = df["stft_data_real"].values
+            self.stft_files_imag = df["stft_data_imaginary"].values
+            self.stft_kind = "split"
+        else:
+            raise ValueError(
+                "CSV must contain either 'STFT_Complex_File' or both "
+                "'stft_data_real' and 'stft_data_imaginary'."
+            )
 
         if pd.isna(self.filter_targets).any():
             unknown = sorted(df.loc[pd.isna(self.filter_targets), "Bandwidth_Hz"].unique().tolist())
@@ -60,7 +72,25 @@ class RFDataset(Dataset):
 
     def __getitem__(self, idx):
         # Load complex STFT → 2-channel (real/imag), per-sample z-score
-        stft = np.load(self.data_root / "stft_complex" / self.stft_files[idx])
+        if self.stft_kind == "complex":
+            stft = np.load(self.data_root / "stft_complex" / self.stft_files[idx])
+        else:
+            real_path = self.data_root / "stft_data" / self.stft_files_real[idx]
+            imag_path = self.data_root / "stft_data" / self.stft_files_imag[idx]
+            if not imag_path.exists():
+                imag_path = self.data_root / "stft_complex" / self.stft_files_imag[idx]
+            if not real_path.exists():
+                real_path = self.data_root / "stft_complex" / self.stft_files_real[idx]
+
+            if not real_path.exists() or not imag_path.exists():
+                raise FileNotFoundError(
+                    f"Could not load split STFT files. Tried {real_path} and {imag_path}."
+                )
+
+            real = np.load(real_path)
+            imag = np.load(imag_path)
+            stft = real + 1j * imag
+
         real, imag = stft.real, stft.imag
         spec = np.stack([
             (real - real.mean()) / (real.std() + 1e-8),

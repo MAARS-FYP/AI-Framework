@@ -7,6 +7,7 @@ ENV_FILE="${ROOT_DIR}/.env"
 MODE="hardware"
 IPC_MODE="shm"
 SOCKET_PATH="/tmp/maars_infer.sock"
+RF_CHAIN_SOCKET_PATH="/tmp/maars_rfchain.sock"
 SAMPLE_RATE_HZ="25000000"
 
 SHM_NAME="maars_iq_ring"
@@ -32,7 +33,9 @@ ILA_CSV_PATH="${ROOT_DIR}/ila_probe0.csv"
 ILA_REQUEST_FLAG_PATH="${ROOT_DIR}/ila_capture_request.txt"
 ILA_POLL_INTERVAL_MS="20"
 ILA_REQUEST_TIMEOUT_MS="5000"
-ILA_BATCH_SAMPLES="256"
+ILA_BATCH_SAMPLES="2048"
+PRINT_INFERENCE_RESULTS="1"
+PLOT_CONSTELLATION="0"
 
 SIMULATE_CYCLES="0"
 SIMULATE_INTERVAL_MS="200"
@@ -41,9 +44,17 @@ SIMULATE_POWER_LNA="-35.2"
 SIMULATE_POWER_PA="-22.8"
 RUST_CLEANUP_SHM_ON_EXIT="0"
 
+RF_CHAIN_CYCLES="0"
+RF_CHAIN_INTERVAL_MS="100"
+RF_CHAIN_ENABLE_INFERENCE="1"
+
 SOCKET_WAIT_TIMEOUT_SEC="30"
 WORKER_PID=""
 VALON_PID=""
+RFCHAIN_WORKER_PID=""
+RFCHAIN_DASHBOARD_PID=""
+TELEMETRY_DASHBOARD_PID=""
+RF_DASHBOARD_HTTP_PID=""
 
 VALON_SOCKET_PATH="/tmp/valon5019.sock"
 VALON_PORT=""
@@ -52,6 +63,7 @@ VALON_BAUD="115200"
 VALON_LOG_LEVEL="INFO"
 VALON_WAIT_TIMEOUT_SEC="5"
 VALON_ENABLED_MODE="auto"
+INFERENCE_TXT_PATH="${ROOT_DIR}/inference_results.txt"
 
 usage() {
   cat <<'EOF'
@@ -60,9 +72,10 @@ Usage:
 
 Options:
   --env-file <path>                  Load deployment variables from env file (default: ./.env if present)
-  --mode <hardware|simulate>         Run full hardware loop or simulation mode
+  --mode <hardware|simulate|digital_twin>  Run full hardware loop, simulation mode, or digital twin
   --ipc-mode <direct|shm>            IPC mode for Rust + Python worker
-  --socket-path <path>               Unix socket path (default: /tmp/maars_infer.sock)
+  --socket-path <path>               Unix socket path for inference worker (default: /tmp/maars_infer.sock)
+  --rf-chain-socket-path <path>      Unix socket path for RF chain worker (default: /tmp/maars_rfchain.sock)
   --sample-rate-hz <float>           Sample rate used by worker and Rust
 
   --shm-name <name>                  SHM segment name (default: maars_iq_ring)
@@ -89,7 +102,14 @@ Options:
   --simulate-power-lna <float>       Simulation LNA power dBm
   --simulate-power-pa <float>        Simulation PA power dBm
 
+  --rf-chain-cycles <int>            Digital twin cycles (0 = continuous, digital_twin mode)
+  --rf-chain-interval-ms <int>       Delay between RF chain calls (digital_twin mode)
+  --rf-chain-enable-inference        Enable inference worker chaining in digital_twin mode
   --rust-cleanup-shm-on-exit         Pass --cleanup-shm-on-exit to Rust
+  --print-inference-results          Print inference summaries from Rust (default: on)
+  --no-print-inference-results       Disable inference summaries from Rust
+  --enable-constellation-plot        Launch the Rust-managed constellation plotter
+  --disable-constellation-plot       Disable the Rust-managed constellation plotter
   --enable-valon                     Force-enable Valon worker and Rust Valon output
   --disable-valon                    Force-disable Valon worker and Rust Valon output
   --valon-socket-path <path>         Valon worker socket path (default: /tmp/valon5019.sock)
@@ -98,6 +118,7 @@ Options:
   --valon-baud <int>                 Valon baud rate (default: 115200)
   --valon-log-level <level>          Valon worker log level (default: INFO)
   --valon-wait-timeout <int>         Valon socket wait timeout seconds (default: 5)
+  --inference-txt-path <path>        Write latest inference snapshot to text file (default: ./inference_results.txt)
   --python-bin <path>                Override Python executable
   --help                             Show this help
 
@@ -143,6 +164,7 @@ while [[ $# -gt 0 ]]; do
     --mode) MODE="$2"; shift 2 ;;
     --ipc-mode) IPC_MODE="$2"; shift 2 ;;
     --socket-path) SOCKET_PATH="$2"; shift 2 ;;
+    --rf-chain-socket-path) RF_CHAIN_SOCKET_PATH="$2"; shift 2 ;;
     --sample-rate-hz) SAMPLE_RATE_HZ="$2"; shift 2 ;;
     --shm-name) SHM_NAME="$2"; shift 2 ;;
     --shm-slots) SHM_SLOTS="$2"; shift 2 ;;
@@ -159,11 +181,18 @@ while [[ $# -gt 0 ]]; do
     --ila-poll-interval-ms) ILA_POLL_INTERVAL_MS="$2"; shift 2 ;;
     --ila-request-timeout-ms) ILA_REQUEST_TIMEOUT_MS="$2"; shift 2 ;;
     --ila-batch-samples) ILA_BATCH_SAMPLES="$2"; shift 2 ;;
+    --print-inference-results) PRINT_INFERENCE_RESULTS="1"; shift ;;
+    --no-print-inference-results) PRINT_INFERENCE_RESULTS="0"; shift ;;
+    --enable-constellation-plot) PLOT_CONSTELLATION="1"; shift ;;
+    --disable-constellation-plot) PLOT_CONSTELLATION="0"; shift ;;
     --simulate-cycles) SIMULATE_CYCLES="$2"; shift 2 ;;
     --simulate-interval-ms) SIMULATE_INTERVAL_MS="$2"; shift 2 ;;
     --simulate-samples) SIMULATE_SAMPLES="$2"; shift 2 ;;
     --simulate-power-lna) SIMULATE_POWER_LNA="$2"; shift 2 ;;
     --simulate-power-pa) SIMULATE_POWER_PA="$2"; shift 2 ;;
+    --rf-chain-cycles) RF_CHAIN_CYCLES="$2"; shift 2 ;;
+    --rf-chain-interval-ms) RF_CHAIN_INTERVAL_MS="$2"; shift 2 ;;
+    --rf-chain-enable-inference) RF_CHAIN_ENABLE_INFERENCE="1"; shift ;;
     --rust-cleanup-shm-on-exit) RUST_CLEANUP_SHM_ON_EXIT="1"; shift ;;
     --enable-valon) VALON_ENABLED_MODE="1"; shift ;;
     --disable-valon) VALON_ENABLED_MODE="0"; shift ;;
@@ -173,6 +202,7 @@ while [[ $# -gt 0 ]]; do
     --valon-baud) VALON_BAUD="$2"; shift 2 ;;
     --valon-log-level) VALON_LOG_LEVEL="$2"; shift 2 ;;
     --valon-wait-timeout) VALON_WAIT_TIMEOUT_SEC="$2"; shift 2 ;;
+    --inference-txt-path) INFERENCE_TXT_PATH="$2"; shift 2 ;;
     --python-bin) PYTHON_BIN="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     --)
@@ -190,7 +220,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${MODE}" != "hardware" && "${MODE}" != "simulate" ]]; then
+if [[ "${MODE}" != "hardware" && "${MODE}" != "simulate" && "${MODE}" != "digital_twin" ]]; then
   echo "Invalid --mode: ${MODE}" >&2
   exit 2
 fi
@@ -230,6 +260,24 @@ cleanup() {
     kill -9 "${WORKER_PID}" >/dev/null 2>&1 || true
   fi
   rm -f "${SOCKET_PATH}" >/dev/null 2>&1 || true
+
+  if [[ -n "${RFCHAIN_DASHBOARD_PID}" ]] && kill -0 "${RFCHAIN_DASHBOARD_PID}" 2>/dev/null; then
+    kill "${RFCHAIN_DASHBOARD_PID}" >/dev/null 2>&1 || true
+    sleep 0.2
+    kill -9 "${RFCHAIN_DASHBOARD_PID}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${TELEMETRY_DASHBOARD_PID}" ]] && kill -0 "${TELEMETRY_DASHBOARD_PID}" 2>/dev/null; then
+    kill "${TELEMETRY_DASHBOARD_PID}" >/dev/null 2>&1 || true
+    sleep 0.2
+    kill -9 "${TELEMETRY_DASHBOARD_PID}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -n "${RF_DASHBOARD_HTTP_PID}" ]] && kill -0 "${RF_DASHBOARD_HTTP_PID}" 2>/dev/null; then
+    kill "${RF_DASHBOARD_HTTP_PID}" >/dev/null 2>&1 || true
+    sleep 0.2
+    kill -9 "${RF_DASHBOARD_HTTP_PID}" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -280,6 +328,101 @@ wait_for_valon_socket() {
   echo "[launcher] valon socket ready: ${VALON_SOCKET_PATH}"
 }
 
+start_rfchain_worker() {
+  local rfchain_socket="${1:-/tmp/maars_rfchain.sock}"
+  
+  rm -f "${rfchain_socket}" >/dev/null 2>&1 || true
+  
+  echo "[launcher] starting Python RF chain worker..."
+  (
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" -m ai_framework.inference.rf_chain_worker \
+      --socket-path "${rfchain_socket}"
+  ) &
+  RFCHAIN_WORKER_PID=$!
+  echo "[launcher] RF chain worker pid=${RFCHAIN_WORKER_PID}"
+}
+
+wait_for_rfchain_socket() {
+  local socket="$1"
+  local waited=0
+  while [[ ! -S "${socket}" ]]; do
+    sleep 0.2
+    waited=$((waited + 1))
+    if (( waited >= 30 * 5 )); then
+      echo "[launcher] RF chain socket not ready at ${socket} after 30s" >&2
+      return 1
+    fi
+  done
+  echo "[launcher] RF chain socket ready: ${socket}"
+}
+
+start_rfchain_dashboard() {
+  echo "[launcher] starting RF chain dashboard backend..."
+  (
+    cd "${ROOT_DIR}/rf_chain_dashboard"
+    "${PYTHON_BIN}" app.py \
+      --rfchain-socket "${RF_CHAIN_SOCKET_PATH}" \
+      --host 127.0.0.1 \
+      --port 8877
+  ) >/tmp/rfchain_dashboard.log 2>&1 &
+  RFCHAIN_DASHBOARD_PID=$!
+  echo "[launcher] RF chain dashboard pid=${RFCHAIN_DASHBOARD_PID}"
+}
+
+wait_for_rfchain_dashboard() {
+  local waited=0
+  local port=8877
+  echo "[launcher] waiting for RF chain dashboard to be ready on port ${port}..."
+  while ! timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/${port}" 2>/dev/null; do
+    sleep 0.2
+    waited=$((waited + 1))
+    if (( waited >= 50 )); then
+      echo "[launcher] RF chain dashboard not ready after 10s" >&2
+      echo "[launcher] Check /tmp/rfchain_dashboard.log for errors" >&2
+      return 1
+    fi
+  done
+  echo "[launcher] RF chain dashboard ready on port ${port}"
+}
+
+start_telemetry_dashboard() {
+  echo "[launcher] starting telemetry dashboard backend..."
+  (
+    cd "${ROOT_DIR}/Dashboard-main"
+    "${PYTHON_BIN}" -m http.server 8080 >/tmp/telemetry_dashboard_http.log 2>&1 &
+    HTTP_PID=$!
+    RF_DASHBOARD_HTTP_PID=$HTTP_PID
+    "${PYTHON_BIN}" udp_ws_bridge.py \
+      --udp-host 127.0.0.1 \
+      --udp-port 9000 \
+      --ws-host 127.0.0.1 \
+      --ws-port 8765 \
+      --ws-path /telemetry \
+      >/tmp/telemetry_dashboard_bridge.log 2>&1 &
+    TELEMETRY_DASHBOARD_PID=$!
+    wait
+  ) &
+  echo "[launcher] telemetry dashboard started"
+  sleep 1
+}
+
+open_dashboard_browsers() {
+  local open_cmd="xdg-open"
+  if command -v open &>/dev/null; then
+    open_cmd="open"
+  fi
+  
+  sleep 2
+  echo "[launcher] opening RF chain dashboard in browser..."
+  ${open_cmd} "file://${ROOT_DIR}/rf_chain_dashboard/index.html" >/dev/null 2>&1 || true
+  
+  echo "[launcher] opening telemetry dashboard in browser..."
+  ${open_cmd} "http://127.0.0.1:8080/index.html?ws=ws://127.0.0.1:8765/telemetry" >/dev/null 2>&1 || true
+  
+  echo "[launcher] dashboards should now be open in your browser"
+}
+
 start_worker() {
   local worker_args=(
     -m ai_framework.inference.worker
@@ -306,13 +449,13 @@ start_worker() {
 
   rm -f "${SOCKET_PATH}" >/dev/null 2>&1 || true
 
-  echo "[launcher] starting Python worker..."
+  echo "[launcher] starting Python inference worker..."
   (
     cd "${ROOT_DIR}"
     "${PYTHON_BIN}" "${worker_args[@]}"
   ) &
   WORKER_PID=$!
-  echo "[launcher] worker pid=${WORKER_PID}"
+  echo "[launcher] inference worker pid=${WORKER_PID}"
 }
 
 wait_for_socket() {
@@ -330,8 +473,10 @@ wait_for_socket() {
 
 run_rust() {
   local rust_args=(
+    --mode "${MODE}"
     --ipc-mode "${IPC_MODE}"
     --socket-path "${SOCKET_PATH}"
+    --rf-chain-socket-path "${RF_CHAIN_SOCKET_PATH}"
     --sample-rate-hz "${SAMPLE_RATE_HZ}"
   )
 
@@ -361,6 +506,8 @@ run_rust() {
       --dry-run-power-lna "${SIMULATE_POWER_LNA}"
       --dry-run-power-pa "${SIMULATE_POWER_PA}"
     )
+  elif [[ "${MODE}" == "digital_twin" ]]; then
+    echo "[launcher] starting in digital_twin mode"
   else
     rust_args+=(
       --uart-port "${UART_PORT}"
@@ -371,6 +518,25 @@ run_rust() {
       --ila-request-timeout-ms "${ILA_REQUEST_TIMEOUT_MS}"
       --ila-batch-samples "${ILA_BATCH_SAMPLES}"
     )
+  fi
+
+  rust_args+=(--inference-txt-path "${INFERENCE_TXT_PATH}")
+
+  if [[ "${PLOT_CONSTELLATION}" == "1" ]]; then
+    rust_args+=(
+      --enable-constellation-plot
+      --plot-python-bin "${PYTHON_BIN}"
+      --plot-script-path "${ROOT_DIR}/pluto_live_plot.py"
+      --plot-slot-index-path "/tmp/maars_iq_ring_slot.txt"
+    )
+  else
+    rust_args+=(--disable-constellation-plot)
+  fi
+
+  if [[ "${PRINT_INFERENCE_RESULTS}" == "1" ]]; then
+    rust_args+=(--print-inference-results)
+  else
+    rust_args+=(--no-print-inference-results)
   fi
 
   if [[ "${RUST_CLEANUP_SHM_ON_EXIT}" == "1" ]]; then
@@ -395,4 +561,24 @@ if ! wait_for_valon_socket; then
   echo "[launcher] valon startup failed" >&2
   exit 1
 fi
+
+# Start RF chain worker and dashboards if in digital_twin mode
+if [[ "${MODE}" == "digital_twin" ]]; then
+  start_rfchain_worker "${RF_CHAIN_SOCKET_PATH}"
+  if ! wait_for_rfchain_socket "${RF_CHAIN_SOCKET_PATH}"; then
+    echo "[launcher] RF chain worker startup failed" >&2
+    exit 1
+  fi
+  
+  # Start dashboards
+  start_rfchain_dashboard
+  if ! wait_for_rfchain_dashboard; then
+    echo "[launcher] RF chain dashboard startup failed" >&2
+    exit 1
+  fi
+  
+  start_telemetry_dashboard
+  open_dashboard_browsers
+fi
+
 run_rust

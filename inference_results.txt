@@ -1,0 +1,5 @@
+seq_id: 84
+status: ok
+evm: 95.44
+power_pre_lna: 0.00
+power_post_pa: -25.76

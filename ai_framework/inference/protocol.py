@@ -17,6 +17,8 @@ MSG_SHUTDOWN_REQ = 5
 MSG_SHUTDOWN_RESP = 6
 MSG_ERROR_RESP = 7
 MSG_INFER_SHM_REQ = 8
+MSG_RFCHAIN_REQ = 10
+MSG_RFCHAIN_RESP = 11
 
 STATUS_OK = 0
 STATUS_INVALID_NO_SIGNAL = 1
@@ -37,6 +39,12 @@ PING_SIZE = struct.calcsize(PING_FMT)
 
 INFER_SHM_REQ_FMT = "<QdffII"
 INFER_SHM_REQ_SIZE = struct.calcsize(INFER_SHM_REQ_FMT)
+
+RFCHAIN_REQ_META_FMT = "<Qffffff I"
+RFCHAIN_REQ_META_SIZE = struct.calcsize(RFCHAIN_REQ_META_FMT)
+
+RFCHAIN_RESP_META_FMT = "<QIffff"
+RFCHAIN_RESP_META_SIZE = struct.calcsize(RFCHAIN_RESP_META_FMT)
 
 
 def _recv_exact(conn: socket.socket, size: int) -> bytes:
@@ -221,3 +229,131 @@ def unpack_error(payload: bytes) -> str:
     (n,) = struct.unpack("<I", payload[:4])
     data = payload[4:4 + n]
     return data.decode("utf-8", errors="replace")
+
+
+def pack_rfchain_request(
+    seq_id: int,
+    power_pre_lna_dbm: float,
+    bandwidth_hz: float,
+    center_freq_hz: float,
+    lna_voltage: float,
+    lo_power_dbm: float,
+    pa_gain_db: float,
+    num_symbols: int = 30,
+) -> bytes:
+    """Pack RF chain request into binary format."""
+    meta = struct.pack(
+        RFCHAIN_REQ_META_FMT,
+        int(seq_id),
+        float(power_pre_lna_dbm),
+        float(bandwidth_hz),
+        float(center_freq_hz),
+        float(lna_voltage),
+        float(lo_power_dbm),
+        float(pa_gain_db),
+        int(num_symbols),
+    )
+    return meta
+
+
+def unpack_rfchain_request(payload: bytes) -> Dict[str, object]:
+    """Unpack RF chain request from binary format."""
+    if len(payload) != RFCHAIN_REQ_META_SIZE:
+        raise ValueError(
+            f"RF chain request payload size mismatch: got {len(payload)}, expected {RFCHAIN_REQ_META_SIZE}"
+        )
+    seq_id, power_pre_lna_dbm, bandwidth_hz, center_freq_hz, lna_voltage, lo_power_dbm, pa_gain_db, num_symbols = struct.unpack(
+        RFCHAIN_REQ_META_FMT, payload
+    )
+    return {
+        "seq_id": int(seq_id),
+        "power_pre_lna_dbm": float(power_pre_lna_dbm),
+        "bandwidth_hz": float(bandwidth_hz),
+        "center_freq_hz": float(center_freq_hz),
+        "lna_voltage": float(lna_voltage),
+        "lo_power_dbm": float(lo_power_dbm),
+        "pa_gain_db": float(pa_gain_db),
+        "num_symbols": int(num_symbols),
+    }
+
+
+def pack_rfchain_response(
+    seq_id: int,
+    status: str,
+    i_samples: np.ndarray,
+    q_samples: np.ndarray,
+    evm_percent: float,
+    power_pre_lna_dbm: float,
+    power_post_pa_dbm: float,
+    processing_time_ms: float,
+) -> bytes:
+    """Pack RF chain response into binary format."""
+    # Encode status string
+    status_bytes = status.encode("utf-8", errors="replace")
+    
+    # Convert samples to float32
+    i_data = np.asarray(i_samples, dtype=np.float32).tobytes(order="C")
+    q_data = np.asarray(q_samples, dtype=np.float32).tobytes(order="C")
+    
+    # Pack header with lengths
+    meta = struct.pack(
+        RFCHAIN_RESP_META_FMT,
+        int(seq_id),
+        len(status_bytes),
+        float(evm_percent),
+        float(power_pre_lna_dbm),
+        float(power_post_pa_dbm),
+        float(processing_time_ms),
+    )
+    
+    # Pack I/Q sample counts (number of samples, not bytes)
+    n_samples = len(i_samples)
+    sample_counts = struct.pack("<II", int(n_samples), int(n_samples))
+    
+    # Concatenate: meta + status_len + status + i_len + i_data + q_len + q_data
+    return meta + status_bytes + sample_counts + i_data + q_data
+
+
+def unpack_rfchain_response(payload: bytes) -> Dict[str, object]:
+    """Unpack RF chain response from binary format."""
+    if len(payload) < RFCHAIN_RESP_META_SIZE:
+        raise ValueError("RF chain response payload too small for header")
+    
+    seq_id, status_len, evm_percent, power_pre_lna_dbm, power_post_pa_dbm, processing_time_ms = struct.unpack(
+        RFCHAIN_RESP_META_FMT, payload[:RFCHAIN_RESP_META_SIZE]
+    )
+    
+    offset = RFCHAIN_RESP_META_SIZE
+    
+    # Extract status string
+    status_bytes = payload[offset:offset + status_len]
+    status = status_bytes.decode("utf-8", errors="replace")
+    offset += status_len
+    
+    # Extract sample counts
+    if len(payload) < offset + 8:
+        raise ValueError("RF chain response missing sample counts")
+    n_i, n_q = struct.unpack("<II", payload[offset:offset + 8])
+    offset += 8
+    
+    # Extract I/Q samples
+    i_bytes = n_i * 4
+    q_bytes = n_q * 4
+    
+    if len(payload) < offset + i_bytes + q_bytes:
+        raise ValueError("RF chain response missing I/Q sample data")
+    
+    i_data = np.frombuffer(payload[offset:offset + i_bytes], dtype=np.float32)
+    offset += i_bytes
+    q_data = np.frombuffer(payload[offset:offset + q_bytes], dtype=np.float32)
+    
+    return {
+        "seq_id": int(seq_id),
+        "status": str(status),
+        "i_samples": i_data,
+        "q_samples": q_data,
+        "evm_percent": float(evm_percent),
+        "power_pre_lna_dbm": float(power_pre_lna_dbm),
+        "power_post_pa_dbm": float(power_post_pa_dbm),
+        "processing_time_ms": float(processing_time_ms),
+    }

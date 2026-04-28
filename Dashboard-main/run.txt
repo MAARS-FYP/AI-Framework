@@ -1,0 +1,13 @@
+Run it now on your side
+
+Start bridge:
+python udp_ws_bridge.py --udp-host 127.0.0.1 --udp-port 9000 --ws-host 127.0.0.1 --ws-port 8765 --ws-path /telemetry
+
+Start sender:
+python udp_telemetry_sender.py --host 127.0.0.1 --port 9000 --hz 15
+
+Open dashboard:
+http://127.0.0.1:8080/index.html?ws=ws://127.0.0.1:8765/telemetry
+
+Run all:
+sh launch_dashboard.sh
