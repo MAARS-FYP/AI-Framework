@@ -19,6 +19,27 @@ from ai_framework.models.backbone import Backbone
 from ai_framework.models.agents import LNAAgent, FilterAgent, MixerAgent, IFAmpAgent
 
 
+class UncertaintyLossBalancer(nn.Module):
+    """Learn task weights from homoscedastic uncertainty parameters."""
+
+    def __init__(self, loss_names, min_log_var: float = -4.0, max_log_var: float = 4.0):
+        super().__init__()
+        self.log_vars = nn.ParameterDict({name: nn.Parameter(torch.zeros(())) for name in loss_names})
+        self.min_log_var = float(min_log_var)
+        self.max_log_var = float(max_log_var)
+
+    def combine(self, losses):
+        first_loss = next(iter(losses.values()))
+        total = torch.zeros((), device=first_loss.device, dtype=first_loss.dtype)
+        weights = {}
+        for name, loss in losses.items():
+            log_var = torch.clamp(self.log_vars[name], self.min_log_var, self.max_log_var)
+            precision = torch.exp(-log_var)
+            total = total + 0.5 * (precision * loss + log_var)
+            weights[name] = float(precision.detach().cpu().item())
+        return total, weights
+
+
 def get_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -39,6 +60,7 @@ def train(
     report_symbolic_baseline=True,
     tensorboard=False,
     tb_logdir="runs/maars",
+    adapter_dim=16,
 ):
     device = get_device()
     print(f"Device: {device}")
@@ -52,17 +74,19 @@ def train(
     # --- Models ---
     metric_dim = int(len(scalers["metrics"].mean_))
     backbone = Backbone(latent_dim=latent_dim, metric_dim=metric_dim).to(device)
-    lna = LNAAgent(latent_dim).to(device)
+    lna = LNAAgent(latent_dim, adapter_dim=adapter_dim).to(device)
     filt = FilterAgent()  # symbolic — no learnable parameters
-    mixer = MixerAgent(latent_dim).to(device)
-    if_amp = IFAmpAgent(latent_dim).to(device)
+    mixer = MixerAgent(latent_dim, adapter_dim=adapter_dim).to(device)
+    if_amp = IFAmpAgent(latent_dim, adapter_dim=adapter_dim).to(device)
+    loss_balancer = UncertaintyLossBalancer(["lna", "mixer", "if_amp"]).to(device)
 
     all_params = (
         list(backbone.parameters()) + list(lna.parameters())
         + list(mixer.parameters()) + list(if_amp.parameters())
+        + list(loss_balancer.parameters())
     )
     optimizer = optim.AdamW(all_params, lr=lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.9)
 
     ce = nn.CrossEntropyLoss()
     mse = nn.MSELoss()
@@ -90,6 +114,7 @@ def train(
                         "lr": lr,
                         "latent_dim": latent_dim,
                         "val_split": val_split,
+                        "adapter_dim": adapter_dim,
                     },
                     indent=2,
                     sort_keys=True,
@@ -119,8 +144,9 @@ def train(
         # --- Training Loop ---
         for epoch in range(1, epochs + 1):
             # Train
-            backbone.train(); lna.train(); mixer.train(); if_amp.train()
+            backbone.train(); lna.train(); mixer.train(); if_amp.train(); loss_balancer.train()
             train_loss = 0.0
+            train_loss_components = {"lna": 0.0, "mixer": 0.0, "if_amp": 0.0}
 
             for batch_idx, ((specs, mets, stft_raw), tgt) in enumerate(train_loader):
                 specs, mets = specs.to(device), mets.to(device)
@@ -133,22 +159,29 @@ def train(
                         print(f"TensorBoard graph logging skipped: {exc}")
 
                 z = backbone(specs, mets)
-                loss = (
-                    ce(lna(z), tgt["lna"])
-                    + mse(mixer(z), tgt["mixer_power"])
-                    + mse(if_amp(z), tgt["if_amp"])
-                )
+                loss_terms = {
+                    "lna": ce(lna(z), tgt["lna"]),
+                    "mixer": mse(mixer(z), tgt["mixer_power"]),
+                    "if_amp": mse(if_amp(z), tgt["if_amp"]),
+                }
+                loss, train_weights = loss_balancer.combine(loss_terms)
 
                 optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(all_params, max_norm=5.0)
                 optimizer.step()
                 train_loss += loss.item()
+                for name, component in loss_terms.items():
+                    train_loss_components[name] += component.item()
 
             train_loss /= len(train_loader)
+            for name in train_loss_components:
+                train_loss_components[name] /= len(train_loader)
 
             # Validate
-            backbone.eval(); lna.eval(); mixer.eval(); if_amp.eval()
+            backbone.eval(); lna.eval(); mixer.eval(); if_amp.eval(); loss_balancer.eval()
             val_loss = 0.0
+            val_component_loss = {"lna": 0.0, "mixer": 0.0, "if_amp": 0.0}
             lna_correct = total = 0
             mixer_ae_sum = ifamp_ae_sum = 0.0  # absolute error sums for regression
             mixer_se_sum = ifamp_se_sum = 0.0  # squared error sums
@@ -162,14 +195,20 @@ def train(
                     tgt = {k: v.to(device) for k, v in tgt.items()}
 
                     z = backbone(specs, mets)
-                    loss = (
-                        ce(lna(z), tgt["lna"])
-                        + mse(mixer(z), tgt["mixer_power"])
-                        + mse(if_amp(z), tgt["if_amp"])
-                    )
+                    lna_logits = lna(z)
+                    mixer_pred = mixer(z)
+                    ifamp_pred = if_amp(z)
+                    loss_terms = {
+                        "lna": ce(lna_logits, tgt["lna"]),
+                        "mixer": mse(mixer_pred, tgt["mixer_power"]),
+                        "if_amp": mse(ifamp_pred, tgt["if_amp"]),
+                    }
+                    loss, _ = loss_balancer.combine(loss_terms)
                     val_loss += loss.item()
+                    for name, component in loss_terms.items():
+                        val_component_loss[name] += component.item()
 
-                    lna_correct += (lna(z).argmax(1) == tgt["lna"]).sum().item()
+                    lna_correct += (lna_logits.argmax(1) == tgt["lna"]).sum().item()
 
                     # Symbolic centre-frequency classification (coupled with filter decision)
                     # Note: FilterAgent predictions are computed but not stored (symbolic, fixed)
@@ -182,8 +221,6 @@ def train(
                             center_freq_counts[c] += 1
 
                     # Regression metrics (on normalized scale)
-                    mixer_pred = mixer(z)
-                    ifamp_pred = if_amp(z)
                     mixer_ae_sum += torch.abs(mixer_pred - tgt["mixer_power"]).sum().item()
                     ifamp_ae_sum += torch.abs(ifamp_pred - tgt["if_amp"]).sum().item()
                     mixer_se_sum += ((mixer_pred - tgt["mixer_power"]) ** 2).sum().item()
@@ -197,6 +234,8 @@ def train(
 
             val_loss /= len(val_loader)
             scheduler.step(val_loss)
+            for name in val_component_loss:
+                val_component_loss[name] /= len(val_loader)
 
             lna_acc = lna_correct / total * 100
 
@@ -208,25 +247,38 @@ def train(
 
             mixer_mae = mixer_ae_sum / total
             ifamp_mae = ifamp_ae_sum / total
+            learned_weights = {
+                name: float(torch.exp(-torch.clamp(param, loss_balancer.min_log_var, loss_balancer.max_log_var)).detach().cpu().item())
+                for name, param in loss_balancer.log_vars.items()
+            }
 
             print(
                 f"Epoch {epoch:3d}/{epochs} | "
                 f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
                 f"LNA: {lna_acc:.1f}% | "
                 f"Mixer R²: {mixer_r2:.1f}% | IFAmp R²: {ifamp_r2:.1f}% | "
-                f"CtrFreq: {center_freq_counts}"
+                f"CtrFreq: {center_freq_counts} | "
+                f"W: lna={learned_weights['lna']:.2f}, mixer={learned_weights['mixer']:.2f}, if_amp={learned_weights['if_amp']:.2f}"
             )
 
             if writer is not None:
                 learning_rate = optimizer.param_groups[0]["lr"]
                 writer.add_scalar("loss/train", train_loss, epoch)
                 writer.add_scalar("loss/val", val_loss, epoch)
+                writer.add_scalar("loss/train_lna", train_loss_components["lna"], epoch)
+                writer.add_scalar("loss/train_mixer", train_loss_components["mixer"], epoch)
+                writer.add_scalar("loss/train_if_amp", train_loss_components["if_amp"], epoch)
+                writer.add_scalar("loss/val_lna", val_component_loss["lna"], epoch)
+                writer.add_scalar("loss/val_mixer", val_component_loss["mixer"], epoch)
+                writer.add_scalar("loss/val_if_amp", val_component_loss["if_amp"], epoch)
                 writer.add_scalar("metrics/lna_acc_pct", lna_acc, epoch)
                 writer.add_scalar("metrics/mixer_r2_pct", mixer_r2, epoch)
                 writer.add_scalar("metrics/ifamp_r2_pct", ifamp_r2, epoch)
                 writer.add_scalar("metrics/mixer_mae", mixer_mae, epoch)
                 writer.add_scalar("metrics/ifamp_mae", ifamp_mae, epoch)
                 writer.add_scalar("optim/lr", learning_rate, epoch)
+                for name, value in learned_weights.items():
+                    writer.add_scalar(f"loss_weights/{name}", value, epoch)
                 writer.add_scalar("symbolic/center_freq_count_2405", center_freq_counts[0], epoch)
                 writer.add_scalar("symbolic/center_freq_count_2420", center_freq_counts[1], epoch)
                 writer.add_scalar("symbolic/center_freq_count_2435", center_freq_counts[2], epoch)
@@ -236,6 +288,7 @@ def train(
                     ("lna", lna),
                     ("mixer", mixer),
                     ("if_amp", if_amp),
+                    ("loss_balancer", loss_balancer),
                 ):
                     for param_name, param in module.named_parameters():
                         writer.add_histogram(f"params/{module_name}.{param_name}", param, epoch)
@@ -248,6 +301,7 @@ def train(
                     "lna": lna.state_dict(),
                     "mixer": mixer.state_dict(),
                     "if_amp": if_amp.state_dict(),
+                    "loss_balancer": loss_balancer.state_dict(),
                 }, save_path / "best_model.pt")
                 joblib.dump(scalers, save_path / "scalers.joblib")
                 print(f"  -> Saved best model (val_loss={val_loss:.4f})")
@@ -283,6 +337,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--latent-dim", type=int, default=64)
+    parser.add_argument("--adapter-dim", type=int, default=16)
     parser.add_argument("--save-dir", default="checkpoints")
     parser.add_argument(
         "--tensorboard",
@@ -308,4 +363,5 @@ if __name__ == "__main__":
         report_symbolic_baseline=args.report_symbolic_baseline,
         tensorboard=args.tensorboard,
         tb_logdir=args.tb_logdir,
+        adapter_dim=args.adapter_dim,
     )

@@ -6,15 +6,40 @@ import torch.nn as nn
 from ai_framework.core.dsp import symbolic_coupled_filter_center_select
 
 
+class TaskAdapter(nn.Module):
+    """Small bottleneck adapter that gives each head a private refinement path."""
+
+    def __init__(self, latent_dim: int = 64, adapter_dim: int = 16):
+        super().__init__()
+        self.enabled = adapter_dim is not None and adapter_dim > 0
+        if not self.enabled:
+            self.norm = None
+            self.down = None
+            self.act = None
+            self.up = None
+            return
+        self.norm = nn.LayerNorm(latent_dim)
+        self.down = nn.Linear(latent_dim, adapter_dim)
+        self.act = nn.GELU()
+        self.up = nn.Linear(adapter_dim, latent_dim)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        if not self.enabled:
+            return z
+        refined = self.up(self.act(self.down(self.norm(z))))
+        return z + refined
+
+
 class LNAAgent(nn.Module):
     """Binary classification: 3V (class 0) or 5V (class 1)."""
 
-    def __init__(self, latent_dim=64):
+    def __init__(self, latent_dim=64, adapter_dim: int = 16):
         super().__init__()
+        self.adapter = TaskAdapter(latent_dim=latent_dim, adapter_dim=adapter_dim)
         self.net = nn.Sequential(nn.Linear(latent_dim, 32), nn.ReLU(), nn.Linear(32, 2))
 
     def forward(self, z):
-        return self.net(z)  # [B, 2] logits
+        return self.net(self.adapter(z))  # [B, 2] logits
 
 
 class FilterAgent:
@@ -113,13 +138,14 @@ class MixerAgent(nn.Module):
 
     CENTER_FREQS_MHZ = (2405, 2420, 2435)
 
-    def __init__(self, latent_dim=64):
+    def __init__(self, latent_dim=64, adapter_dim: int = 16):
         super().__init__()
+        self.adapter = TaskAdapter(latent_dim=latent_dim, adapter_dim=adapter_dim)
         self.net = nn.Sequential(nn.Linear(latent_dim, 32), nn.ReLU(), nn.Linear(32, 1))
 
     def forward(self, z):
         """Neural LO-power regression."""
-        return self.net(z).squeeze(-1)  # [B]
+        return self.net(self.adapter(z)).squeeze(-1)  # [B]
 
     @staticmethod
     def classify_center_freq(
@@ -149,9 +175,10 @@ class MixerAgent(nn.Module):
 class IFAmpAgent(nn.Module):
     """Regression: predicts normalized IF gain."""
 
-    def __init__(self, latent_dim=64):
+    def __init__(self, latent_dim=64, adapter_dim: int = 16):
         super().__init__()
+        self.adapter = TaskAdapter(latent_dim=latent_dim, adapter_dim=adapter_dim)
         self.net = nn.Sequential(nn.Linear(latent_dim, 32), nn.ReLU(), nn.Linear(32, 1))
 
     def forward(self, z):
-        return self.net(z).squeeze(-1)  # [B]
+        return self.net(self.adapter(z)).squeeze(-1)  # [B]
