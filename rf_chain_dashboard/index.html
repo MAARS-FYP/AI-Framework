@@ -374,7 +374,7 @@
                 <div class="control-group">
                     <label class="label">Input Power (dBm)</label>
                     <div class="slider-container">
-                        <input type="range" v-model.number="params.power_pre_lna_dbm" min="-60" max="-20" step="1" @input="updateParams">
+                        <input type="range" v-model.number="params.power_pre_lna_dbm" min="-60" max="20" step="1" @input="updateParams">
                         <span class="value-display">{{params.power_pre_lna_dbm.toFixed(1)}}</span>
                     </div>
                 </div>

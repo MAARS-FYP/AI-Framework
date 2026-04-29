@@ -147,7 +147,7 @@ class RFChainEngine:
         Process a random OFDM signal through the RF chain digital twin.
         
         Args:
-            power_pre_lna_dbm: Input signal power before LNA (-60 to -20 dBm)
+            power_pre_lna_dbm: Input signal power before LNA (-60 to +20 dBm)
             bandwidth_hz: Signal bandwidth (1e6, 10e6, or 20e6 Hz)
             center_freq_hz: Center frequency (for reference, not used in IF processing)
             lna_voltage: LNA supply voltage (3.0 or 5.0 V)

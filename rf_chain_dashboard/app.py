@@ -39,6 +39,10 @@ from ai_framework.inference.protocol import (
 logger = logging.getLogger(__name__)
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
 class RFChainDashboardBackend:
     """
     WebSocket server for RF chain dashboard.
@@ -76,6 +80,22 @@ class RFChainDashboardBackend:
         
         self.seq_id = 0
         logger.info(f"Dashboard backend initialized: WS {ws_host}:{ws_port}")
+
+    def _sanitize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = dict(params)
+        if "power_pre_lna_dbm" in cleaned:
+            cleaned["power_pre_lna_dbm"] = _clamp(float(cleaned["power_pre_lna_dbm"]), -60.0, 20.0)
+        if "bandwidth_hz" in cleaned:
+            cleaned["bandwidth_hz"] = _clamp(float(cleaned["bandwidth_hz"]), 1e6, 60e6)
+        if "center_freq_hz" in cleaned:
+            cleaned["center_freq_hz"] = _clamp(float(cleaned["center_freq_hz"]), 2395e6, 2480e6)
+        if "lna_voltage" in cleaned:
+            cleaned["lna_voltage"] = _clamp(float(cleaned["lna_voltage"]), 3.0, 5.0)
+        if "lo_power_dbm" in cleaned:
+            cleaned["lo_power_dbm"] = _clamp(float(cleaned["lo_power_dbm"]), -13.75, 20.0)
+        if "pa_gain_db" in cleaned:
+            cleaned["pa_gain_db"] = _clamp(float(cleaned["pa_gain_db"]), -6.0, 26.0)
+        return cleaned
 
     async def connect_to_rfchain_worker(self) -> bool:
         try:
@@ -210,7 +230,7 @@ class RFChainDashboardBackend:
                     cmd = json.loads(message)
                     if cmd.get("action") == "update_params":
                         params = cmd.get("params", {})
-                        self.current_params.update(params)
+                        self.current_params.update(self._sanitize_params(params))
                         self.current_params["manual_mode"] = 1
                         logger.info(f"Manual update: {params}")
                         try:

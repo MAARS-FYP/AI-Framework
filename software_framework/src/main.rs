@@ -966,13 +966,14 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                 if let Some(v) = overrides.get("lna_voltage") { if let Ok(f) = v.parse::<f32>() { lna_voltage = f; } }
                 if let Some(v) = overrides.get("lo_power_dbm") { if let Ok(f) = v.parse::<f32>() { lo_power = f; } }
                 if let Some(v) = overrides.get("pa_gain_db") { if let Ok(f) = v.parse::<f32>() { pa_gain = f; } }
+                power_pre_lna = power_pre_lna.clamp(-60.0, 20.0);
             }
         }
 
         // In autonomous mode (manual_mode == 0), fix the LO at 2395 MHz (for 2420 center target)
         // so the AI can detect shifts as the RF signal sweeps.
         // We also use a wide (60 MHz) filter so the AI can "see" the whole band.
-        // In manual mode, we follow user's desired tuning exactly.
+        // In manual mode, we follow user's desired tuning exactly, with power input clamped to [-60, +20] dBm.
         let target_center_mhz = if manual_mode == 1 { center_freq_hz / 1e6 } else { 2420.0 };
         let evaluation_lo_freq_hz = (target_center_mhz - 25.0) * 1e6;
         let evaluation_lo_power_dbm = if manual_mode == 1 { lo_power } else { 0.0 };
