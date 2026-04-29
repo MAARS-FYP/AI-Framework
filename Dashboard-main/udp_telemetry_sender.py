@@ -77,65 +77,102 @@ def parse_snapshot_file(path: Path) -> Dict[str, Any]:
     return result
 
 
-def derive_payload(snapshot: Dict[str, Any], seq_fallback: int) -> Dict[str, Any]:
-    seq_id = int(snapshot.get("seq_id", seq_fallback) or seq_fallback)
+class SenderState:
+    def __init__(self, seq_start: int):
+        self.seq_id = seq_start
+        self.status_code = 0
+        self.status_text = "ok"
+        self.lna_class = 0
+        self.filter_class = 1
+        self.center_class = 1
+        self.lna_voltage_v = 3.0
+        self.selected_filter_mhz = 10.0
+        self.lo_center_mhz = 2420.0
+        self.lo_power_dbm = -15.0
+        self.ifamp_db = 0.0
+        self.power_lna_raw = -35.0
+        self.power_pa_raw = -24.0
+        self.evm_value = 0.0
+        self.processing_time_ms = 0.0
+        self.source = "init"
 
-    status_value = snapshot.get("status", snapshot.get("status_text", "ok"))
-    status_code = int(snapshot.get("status_code", 0) or 0)
-    if isinstance(status_value, str) and status_value.lower() not in {"ok", "0", "live"}:
-        status_code = 1 if status_code == 0 else status_code
+    def update(self, snapshot: Dict[str, Any]):
+        if not snapshot:
+            return
 
-    lna_class = int(snapshot.get("lna_class", 0) or 0)
-    filter_class = int(snapshot.get("filter_class", 1) or 1)
-    center_class = int(snapshot.get("center_class", 1) or 1)
+        if "seq_id" in snapshot:
+            self.seq_id = int(snapshot["seq_id"])
+        
+        if "status" in snapshot or "status_text" in snapshot:
+            self.status_text = str(snapshot.get("status", snapshot.get("status_text")))
+        
+        if "status_code" in snapshot:
+            self.status_code = int(snapshot["status_code"])
+        
+        if "lna_class" in snapshot:
+            self.lna_class = int(snapshot["lna_class"])
+        if "filter_class" in snapshot:
+            self.filter_class = int(snapshot["filter_class"])
+        if "center_class" in snapshot:
+            self.center_class = int(snapshot["center_class"])
 
-    lna_voltage_v = float(
-        snapshot.get("lna_voltage_v", LNA_VOLTAGE_BY_CLASS.get(lna_class, 3.0))
-    )
-    selected_filter_mhz = float(
-        snapshot.get("selected_filter_mhz", FILTER_MHZ_BY_CLASS.get(filter_class, 10.0))
-    )
-    lo_center_mhz = float(
-        snapshot.get("lo_center_mhz", snapshot.get("valon_frequency_mhz", CENTER_MHZ_BY_CLASS.get(center_class, 2420.0)))
-    )
-    lo_power_dbm = float(
-        snapshot.get("lo_power_dbm", snapshot.get("valon_power_dbm", snapshot.get("mixer_dbm", -15.0)))
-    )
-    if_amp_gain_db = float(
-        snapshot.get("if_amp_gain_db", snapshot.get("ifamp_db", snapshot.get("ifamp_value", 0.0)))
-    )
+        self.lna_voltage_v = float(snapshot.get("lna_voltage_v", LNA_VOLTAGE_BY_CLASS.get(self.lna_class, self.lna_voltage_v)))
+        self.selected_filter_mhz = float(snapshot.get("selected_filter_mhz", FILTER_MHZ_BY_CLASS.get(self.filter_class, self.selected_filter_mhz)))
+        
+        # Priority: explicit lo_center_mhz -> valon_frequency_mhz -> class-based
+        if "lo_center_mhz" in snapshot:
+            self.lo_center_mhz = float(snapshot["lo_center_mhz"])
+        elif "valon_frequency_mhz" in snapshot:
+            self.lo_center_mhz = float(snapshot["valon_frequency_mhz"])
+        else:
+            self.lo_center_mhz = float(CENTER_MHZ_BY_CLASS.get(self.center_class, self.lo_center_mhz))
 
-    power_lna_dbm = float(
-        snapshot.get("power_lna_dbm", snapshot.get("power_pre_lna", snapshot.get("power_lna_raw", -35.0)))
-    )
-    power_pa_dbm = float(
-        snapshot.get("power_pa_dbm", snapshot.get("power_post_pa", snapshot.get("power_pa_raw", -24.0)))
-    )
-    evm_value = float(snapshot.get("evm_value", snapshot.get("evm", 0.0)) or 0.0)
-    processing_time_ms = float(snapshot.get("processing_time_ms", 0.0) or 0.0)
+        self.lo_power_dbm = float(snapshot.get("lo_power_dbm", snapshot.get("valon_power_dbm", snapshot.get("mixer_dbm", self.lo_power_dbm))))
+        self.ifamp_db = float(snapshot.get("ifamp_db", snapshot.get("ifamp_value", self.ifamp_db)))
+        
+        self.power_lna_raw = float(
+            snapshot.get(
+                "power_lna_raw",
+                snapshot.get("power_lna_dbm", snapshot.get("power_pre_lna_dbm", snapshot.get("power_pre_lna", self.power_lna_raw))),
+            )
+        )
+        self.power_pa_raw = float(
+            snapshot.get(
+                "power_pa_raw",
+                snapshot.get("power_pa_dbm", snapshot.get("power_post_pa_dbm", snapshot.get("power_post_pa", self.power_pa_raw))),
+            )
+        )
+        
+        self.evm_value = float(snapshot.get("evm_value", snapshot.get("evm_percent", snapshot.get("evm", self.evm_value))))
+        self.processing_time_ms = float(snapshot.get("processing_time_ms", self.processing_time_ms))
+        self.source = str(snapshot.get("source", self.source))
 
-    return {
-        "seq_id": seq_id,
-        "status_code": status_code,
-        "status_text": str(status_value),
-        "lna_class": lna_class,
-        "lna_voltage_v": round(lna_voltage_v, 2),
-        "filter_class": filter_class,
-        "selected_filter_mhz": round(selected_filter_mhz, 2),
-        "selected_filter_label": f"{selected_filter_mhz:.0f} MHz" if selected_filter_mhz >= 1 else f"{selected_filter_mhz:.2f} MHz",
-        "center_class": center_class,
-        "lo_center_mhz": round(lo_center_mhz, 3),
-        "lo_power_dbm": round(lo_power_dbm, 2),
-        "mixer_dbm": round(lo_power_dbm, 2),
-        "ifamp_db": round(if_amp_gain_db, 2),
-        "power_lna_raw": round(power_lna_dbm, 2),
-        "power_pa_raw": round(power_pa_dbm, 2),
-        "power_lna_dbm": round(power_lna_dbm, 2),
-        "power_pa_dbm": round(power_pa_dbm, 2),
-        "evm_value": round(evm_value, 2),
-        "processing_time_ms": round(processing_time_ms, 3),
-        "source": snapshot.get("source", "inference_snapshot"),
-    }
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "seq_id": self.seq_id,
+            "status_code": self.status_code,
+            "status_text": self.status_text,
+            "lna_class": self.lna_class,
+            "lna_voltage_v": round(self.lna_voltage_v, 2),
+            "filter_class": self.filter_class,
+            "selected_filter_mhz": round(self.selected_filter_mhz, 2),
+            "selected_filter_label": f"{self.selected_filter_mhz:.0f} MHz" if self.selected_filter_mhz >= 1 else f"{self.selected_filter_mhz:.2f} MHz",
+            "center_class": self.center_class,
+            "lo_center_mhz": round(self.lo_center_mhz, 3),
+            "lo_power_dbm": round(self.lo_power_dbm, 2),
+            "mixer_dbm": round(self.lo_power_dbm, 2),
+            "ifamp_db": round(self.ifamp_db, 2),
+            "power_lna_raw": round(self.power_lna_raw, 2),
+            "power_pa_raw": round(self.power_pa_raw, 2),
+            "power_lna_dbm": round(self.power_lna_raw, 2),
+            "power_pre_lna_dbm": round(self.power_lna_raw, 2),
+            "power_pa_dbm": round(self.power_pa_raw, 2),
+            "power_post_pa_dbm": round(self.power_pa_raw, 2),
+            "evm_value": round(self.evm_value, 2),
+            "evm_percent": round(self.evm_value, 2),
+            "processing_time_ms": round(self.processing_time_ms, 3),
+            "source": self.source,
+        }
 
 
 def run_sender(
@@ -148,19 +185,15 @@ def run_sender(
     source_file: Path,
 ) -> None:
     interval = 1.0 / hz
-    seq = start_seq
     sent = 0
-    last_snapshot: Dict[str, Any] = {}
+    state = SenderState(start_seq)
+    last_sent_payload = None
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     print(f"Sending UDP telemetry to {host}:{port} at {hz:.2f} Hz")
     print(f"Telemetry source: {source_file}")
-    if count is None:
-        print("Packet count: infinite (Ctrl+C to stop)")
-    else:
-        print(f"Packet count: {count}")
-
+    
     next_send = time.perf_counter()
 
     try:
@@ -169,20 +202,23 @@ def run_sender(
             if now < next_send:
                 time.sleep(next_send - now)
 
-            last_snapshot = parse_snapshot_file(source_file)
+            snapshot = parse_snapshot_file(source_file)
+            if snapshot:
+                state.update(snapshot)
 
-            if not last_snapshot:
-                time.sleep(0.05)
-                continue
-
-            payload = derive_payload(last_snapshot, seq)
+            payload = state.to_payload()
+            
+            # Send every cycle for high-resolution updates
             encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             sock.sendto(encoded, (host, port))
+            
+            if verbose or (sent % 30 == 0):
+                # Print abbreviated summary for standard logging
+                print(f"[telemetry seq={payload['seq_id']}] LNA={payload['power_lna_raw']} PA={payload['power_pa_raw']} EVM={payload['evm_value']} BW={payload['selected_filter_mhz']} RF={payload['lo_center_mhz']}")
+                # Detailed payload log for deep debugging
+                if verbose:
+                    print(f"FULL PAYLOAD: {encoded.decode('utf-8')}")
 
-            if verbose:
-                print(encoded.decode("utf-8"))
-
-            seq += 1
             sent += 1
             next_send += interval
     except KeyboardInterrupt:

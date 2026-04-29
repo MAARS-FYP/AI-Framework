@@ -8,7 +8,7 @@ MODE="hardware"
 IPC_MODE="shm"
 SOCKET_PATH="/tmp/maars_infer.sock"
 RF_CHAIN_SOCKET_PATH="/tmp/maars_rfchain.sock"
-SAMPLE_RATE_HZ="25000000"
+SAMPLE_RATE_HZ="125000000"
 
 SHM_NAME="maars_iq_ring"
 SHM_SLOTS="8"
@@ -161,6 +161,17 @@ while [[ ${idx} -lt ${#ARGS[@]} ]]; do
 done
 
 load_env_file "${ENV_FILE}"
+
+# --- PURGE ORPHANS ---
+echo "[launcher] cleaning up old processes..."
+pkill -9 -f software-framework || true
+pkill -9 -f ai_framework.inference.worker || true
+pkill -9 -f ai_framework.inference.rf_chain_worker || true
+pkill -9 -f udp_ws_bridge.py || true
+pkill -9 -f udp_telemetry_sender.py || true
+pkill -9 -f "python3 -m http.server 8080" || true
+rm -f /tmp/maars_*.sock /tmp/maars_digital_twin_params.txt || true
+sleep 0.5
 
 EXTRA_RUST_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -452,6 +463,7 @@ start_worker() {
     --scalers "${SCALERS_PATH}"
     --device "${WORKER_DEVICE}"
     --sample-rate-hz "${SAMPLE_RATE_HZ}"
+    --allow-center-shift
   )
 
   if [[ "${IPC_MODE}" == "shm" ]]; then

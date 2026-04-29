@@ -102,6 +102,7 @@ class RFChainSocketWorker:
                 power_pre_lna_dbm=req["power_pre_lna_dbm"],
                 bandwidth_hz=req["bandwidth_hz"],
                 center_freq_hz=req["center_freq_hz"],
+                lo_freq_hz=req.get("lo_freq_hz", 0.0),
                 lna_voltage=req["lna_voltage"],
                 lo_power_dbm=req["lo_power_dbm"],
                 pa_gain_db=req["pa_gain_db"],

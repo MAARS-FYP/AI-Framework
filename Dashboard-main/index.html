@@ -1562,9 +1562,13 @@
             " ms",
           );
 
-          dom.powerLna.textContent = formatFixed(payload.power_lna_raw, 1);
-          dom.powerIfamp.textContent = formatFixed(payload.power_pa_raw, 1);
-          dom.evm.textContent = formatFixed(payload.evm_value, 2);
+          const powerLna = payload.power_lna_raw ?? payload.power_pre_lna_dbm ?? payload.power_lna_dbm;
+          const powerIfamp = payload.power_pa_raw ?? payload.power_post_pa_dbm ?? payload.power_pa_dbm;
+          const evmValue = payload.evm_value ?? payload.evm_percent;
+
+          dom.powerLna.textContent = formatFixed(powerLna, 1);
+          dom.powerIfamp.textContent = formatFixed(powerIfamp, 1);
+          dom.evm.textContent = formatFixed(evmValue, 2);
 
           dom.lnaClass.textContent = lookupLabel(LNA_CLASS_MAP, lnaClass);
           dom.filterClass.textContent = lookupLabel(
@@ -1585,9 +1589,9 @@
           updateLnaSelection(lnaClass);
           updateFilterSelection(filterClass);
 
-          addHistorySample(state.lnaPowerHistory, payload.power_lna_raw);
-          addHistorySample(state.ifampPowerHistory, payload.power_pa_raw);
-          addHistorySample(state.evmHistory, payload.evm_value);
+          addHistorySample(state.lnaPowerHistory, powerLna);
+          addHistorySample(state.ifampPowerHistory, powerIfamp);
+          addHistorySample(state.evmHistory, evmValue);
           drawAllSparklines();
 
           updateStatusStyling(statusCode);

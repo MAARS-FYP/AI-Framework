@@ -40,7 +40,7 @@ PING_SIZE = struct.calcsize(PING_FMT)
 INFER_SHM_REQ_FMT = "<QdffII"
 INFER_SHM_REQ_SIZE = struct.calcsize(INFER_SHM_REQ_FMT)
 
-RFCHAIN_REQ_META_FMT = "<Qffffff I"
+RFCHAIN_REQ_META_FMT = "<Qfffffff I"
 RFCHAIN_REQ_META_SIZE = struct.calcsize(RFCHAIN_REQ_META_FMT)
 
 RFCHAIN_RESP_META_FMT = "<QIffff"
@@ -236,6 +236,7 @@ def pack_rfchain_request(
     power_pre_lna_dbm: float,
     bandwidth_hz: float,
     center_freq_hz: float,
+    lo_freq_hz: float,
     lna_voltage: float,
     lo_power_dbm: float,
     pa_gain_db: float,
@@ -248,6 +249,7 @@ def pack_rfchain_request(
         float(power_pre_lna_dbm),
         float(bandwidth_hz),
         float(center_freq_hz),
+        float(lo_freq_hz),
         float(lna_voltage),
         float(lo_power_dbm),
         float(pa_gain_db),
@@ -262,7 +264,7 @@ def unpack_rfchain_request(payload: bytes) -> Dict[str, object]:
         raise ValueError(
             f"RF chain request payload size mismatch: got {len(payload)}, expected {RFCHAIN_REQ_META_SIZE}"
         )
-    seq_id, power_pre_lna_dbm, bandwidth_hz, center_freq_hz, lna_voltage, lo_power_dbm, pa_gain_db, num_symbols = struct.unpack(
+    seq_id, power_pre_lna_dbm, bandwidth_hz, center_freq_hz, lo_freq_hz, lna_voltage, lo_power_dbm, pa_gain_db, num_symbols = struct.unpack(
         RFCHAIN_REQ_META_FMT, payload
     )
     return {
@@ -270,6 +272,7 @@ def unpack_rfchain_request(payload: bytes) -> Dict[str, object]:
         "power_pre_lna_dbm": float(power_pre_lna_dbm),
         "bandwidth_hz": float(bandwidth_hz),
         "center_freq_hz": float(center_freq_hz),
+        "lo_freq_hz": float(lo_freq_hz),
         "lna_voltage": float(lna_voltage),
         "lo_power_dbm": float(lo_power_dbm),
         "pa_gain_db": float(pa_gain_db),

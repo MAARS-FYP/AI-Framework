@@ -422,21 +422,21 @@
                     <div class="metric-card">
                         <div class="metric-label">Pre-LNA Power</div>
                         <div class="metric-value">
-                            {{ rfchainData ? rfchainData.power_pre_lna_dbm.toFixed(1) : '--' }}
+                            {{ rfchainData ? ((rfchainData.power_pre_lna_dbm ?? rfchainData.power_lna_dbm ?? rfchainData.power_lna_raw)?.toFixed(1) ?? '--') : '--' }}
                             <span class="metric-unit">dBm</span>
                         </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Post-PA Power</div>
                         <div class="metric-value">
-                            {{ rfchainData ? rfchainData.power_post_pa_dbm.toFixed(1) : '--' }}
+                            {{ rfchainData ? ((rfchainData.power_post_pa_dbm ?? rfchainData.power_pa_dbm ?? rfchainData.power_pa_raw)?.toFixed(1) ?? '--') : '--' }}
                             <span class="metric-unit">dBm</span>
                         </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">EVM</div>
                         <div class="metric-value">
-                            {{ rfchainData ? rfchainData.evm_percent.toFixed(2) : '--' }}
+                            {{ rfchainData ? ((rfchainData.evm_percent ?? rfchainData.evm_value)?.toFixed(2) ?? '--') : '--' }}
                             <span class="metric-unit">%</span>
                         </div>
                     </div>

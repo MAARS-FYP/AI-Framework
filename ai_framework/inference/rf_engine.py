@@ -136,6 +136,7 @@ class RFChainEngine:
         power_pre_lna_dbm: float = -40.0,
         bandwidth_hz: float = 10e6,
         center_freq_hz: float = 2420e6,
+        lo_freq_hz: float = 0.0,
         lna_voltage: float = 3.0,
         lo_power_dbm: float = 0.0,
         pa_gain_db: float = 10.0,
@@ -182,13 +183,15 @@ class RFChainEngine:
             # Create operating point and setting
             op_point = OperatingPoint(
                 power_pre_lna_dbm=power_pre_lna_dbm,
-                bandwidth=bandwidth_hz
+                bandwidth=bandwidth_hz,
+                center_freq=center_freq_hz
             )
             
             setting = Setting(
                 lna_voltage=lna_voltage,
                 pa_drive_db=0.0,  # No additional PA drive from user control
-                lo_power_dbm=lo_power_dbm
+                lo_power_dbm=lo_power_dbm,
+                lo_freq_hz=lo_freq_hz
             )
             
             # Process through RF chain up to PA input

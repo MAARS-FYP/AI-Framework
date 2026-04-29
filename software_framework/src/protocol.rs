@@ -54,6 +54,7 @@ pub struct RFChainRequest {
     pub power_pre_lna_dbm: f32,
     pub bandwidth_hz: f32,
     pub center_freq_hz: f32,
+    pub lo_freq_hz: f32,
     pub lna_voltage: f32,
     pub lo_power_dbm: f32,
     pub pa_gain_db: f32,
@@ -211,11 +212,12 @@ pub fn unpack_ping(payload: &[u8]) -> io::Result<u64> {
 }
 
 pub fn pack_rfchain_request(req: &RFChainRequest) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(40);
+    let mut payload = Vec::with_capacity(44);
     payload.extend_from_slice(&req.seq_id.to_le_bytes());
     payload.extend_from_slice(&req.power_pre_lna_dbm.to_le_bytes());
     payload.extend_from_slice(&req.bandwidth_hz.to_le_bytes());
     payload.extend_from_slice(&req.center_freq_hz.to_le_bytes());
+    payload.extend_from_slice(&req.lo_freq_hz.to_le_bytes());
     payload.extend_from_slice(&req.lna_voltage.to_le_bytes());
     payload.extend_from_slice(&req.lo_power_dbm.to_le_bytes());
     payload.extend_from_slice(&req.pa_gain_db.to_le_bytes());
