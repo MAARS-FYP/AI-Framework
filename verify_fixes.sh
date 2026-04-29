@@ -14,7 +14,7 @@ WORKER_PID=$!
 sleep 2
 
 echo "Running digital-twin for 5 cycles..."
-rm -f inference_results.txt ai_inference.txt
+rm -f inference_results.txt
 cd /run/media/warren/Education/UoM/FYP/AI-Framework/software_framework
 timeout 8 cargo run --release -- \
   --mode digital_twin \
@@ -42,14 +42,6 @@ if [ -f inference_results.txt ]; then
   grep "seq_id=" inference_results.txt | head -1
 else
   echo "  [NO FILE]"
-fi
-
-echo ""
-echo "2. AI Inference Log (should show agent decisions):"
-if [ -f ai_inference.txt ]; then
-  tail -3 ai_inference.txt
-else
-  echo "  [NO LOG]"
 fi
 
 echo ""

@@ -112,16 +112,7 @@ class InferenceSocketWorker:
             sample_rate_hz=sample_rate_hz,
         )
         
-        # Log inference results
-        try:
-            import datetime
-            timestamp = datetime.datetime.now().isoformat()
-            log_entry = f"[{timestamp}] seq_id={req['seq_id']}, LNA={out['lna_class']}, Filter={out['filter_class']}, Center={out['center_class']}, Mixer={out['mixer_dbm']:.3f}dBm, IFAmp={out['ifamp_db']:.3f}dB, EVM={out['evm_value']:.3f}%, Status={_status_code(out['status'])}"
-            log_path = Path("./ai_inference.txt")
-            with open(log_path, "a") as f:
-                f.write(log_entry + "\n")
-        except Exception:
-            pass  # Silently ignore logging errors
+        # Log inference results (DEPRECATED: Logging to ai_inference.txt removed)
         
         return pack_infer_response(
             seq_id=req["seq_id"],
