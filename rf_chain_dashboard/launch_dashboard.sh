@@ -6,6 +6,16 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+PYTHON_BIN_DEFAULT="$PROJECT_ROOT/.fyp/bin/python"
+PYTHON_BIN_FALLBACK="$PROJECT_ROOT/.venv/bin/python"
+if [[ -x "$PYTHON_BIN_DEFAULT" ]]; then
+    PYTHON_BIN="$PYTHON_BIN_DEFAULT"
+elif [[ -x "$PYTHON_BIN_FALLBACK" ]]; then
+    PYTHON_BIN="$PYTHON_BIN_FALLBACK"
+else
+    PYTHON_BIN="python3"
+fi
+
 # Default values
 RFCHAIN_SOCKET="/tmp/maars_rfchain.sock"
 INFERENCE_SOCKET="/tmp/maars_infer.sock"
@@ -52,7 +62,7 @@ echo "  WebSocket Server: ws://$WS_HOST:$WS_PORT"
 cd "$PROJECT_ROOT"
 
 # Start the backend server
-python -m ai_framework.inference.rf_chain_worker \
+"$PYTHON_BIN" -m ai_framework.inference.rf_chain_worker \
     --socket-path "$RFCHAIN_SOCKET" &
 WORKER_PID=$!
 
@@ -60,7 +70,7 @@ WORKER_PID=$!
 sleep 1
 
 # Start the dashboard backend
-python "$SCRIPT_DIR/app.py" \
+"$PYTHON_BIN" "$SCRIPT_DIR/app.py" \
     --rfchain-socket "$RFCHAIN_SOCKET" \
     --inference-socket "$INFERENCE_SOCKET" \
     --host "$WS_HOST" \

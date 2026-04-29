@@ -173,6 +173,11 @@ class RFChainEngine:
             base_sig, qam_symbols, num_active, cp_len = self.rf_chain.generate_variable_bw_ofdm(
                 bandwidth_hz, FS, num_symbols=num_symbols
             )
+
+            # Normalize generated OFDM signal to requested pre-LNA input power.
+            base_power_dbm = self.calculate_power_dbm(base_sig)
+            input_gain_db = power_pre_lna_dbm - base_power_dbm
+            base_sig = base_sig * (10 ** (input_gain_db / 20.0))
             
             # Create operating point and setting
             op_point = OperatingPoint(
@@ -190,9 +195,8 @@ class RFChainEngine:
             logger.debug("Processing through RF chain (LNA → Mixer → Filter)")
             x_pa_in = self.rf_chain.process_chain_pre_pa(base_sig, op_point, setting)
             
-            # Measure input power (pre-PA, post-LNA)
-            # This is the signal entering the PA
-            power_pre_lna = self.calculate_power_dbm(base_sig)  # Original input
+            # Measure true input power after normalization (pre-LNA).
+            power_pre_lna = self.calculate_power_dbm(base_sig)
             
             # Apply the final power scaling from the signal path to get accurate pre-PA measurement
             # The signal has been through LNA, mixer, filter

@@ -181,8 +181,10 @@ fn print_help() {
 Usage:\n\
   cargo run -- [options]\n\n\
 Options:\n\
+  --mode <hardware|simulate|digital_twin>  Operating mode (default: hardware)\n\
   --ipc-mode <direct|shm>            IPC mode (default: direct)\n\
   --socket-path <path>               Unix socket path (default: /tmp/maars_infer.sock)\n\
+  --rf-chain-socket-path <path>      RF chain Unix socket path (default: /tmp/maars_rfchain.sock)\n\
   --sample-rate-hz <float>           Sample rate sent to inference worker\n\
   --shm-name <name>                  SHM segment name (default: maars_iq_ring)\n\
   --shm-slots <int>                  SHM slot count (default: 8)\n\
@@ -222,6 +224,8 @@ Options:\n\
         --disable-valon                    Disable Valon LO socket output\n\
         --valon-socket-path <path>         Valon Unix socket path (default: /tmp/valon5019.sock)\n\
         --inference-txt-path <path>        Snapshot text file path (default: ./inference_results.txt)\n\
+        --rf-chain-cycles <int>            Digital twin RF chain cycles (0 = run continuously, default: 0)\n\
+        --rf-chain-interval-ms <int>       Delay between RF chain calls in ms (default: 100)\n\
                 --enable-constellation-plot        Launch the Python constellation plotter from Rust\n\
                 --disable-constellation-plot       Disable the Python constellation plotter\n\
                 --plot-python-bin <path>           Python executable used for the plotter (default: python3)\n\
@@ -486,6 +490,22 @@ fn parse_args() -> Result<AppConfig, String> {
                     .get(idx)
                     .ok_or("Missing value for --inference-txt-path")?
                     .to_string();
+            }
+            "--rf-chain-cycles" => {
+                idx += 1;
+                cfg.rf_chain_cycles = args
+                    .get(idx)
+                    .ok_or("Missing value for --rf-chain-cycles")?
+                    .parse::<u64>()
+                    .map_err(|_| "Invalid int for --rf-chain-cycles")?;
+            }
+            "--rf-chain-interval-ms" => {
+                idx += 1;
+                cfg.rf_chain_interval_ms = args
+                    .get(idx)
+                    .ok_or("Missing value for --rf-chain-interval-ms")?
+                    .parse::<u64>()
+                    .map_err(|_| "Invalid int for --rf-chain-interval-ms")?;
             }
             "--enable-constellation-plot" => {
                 cfg.plot_constellation = true;
@@ -886,6 +906,9 @@ fn run_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
 
             if let Err(e) = write_inference_snapshot_txt(
                 cfg,
+                &resp,
+                power_lna_dbm,
+                power_pa_dbm,
                 &control_values,
                 &valon_values,
                 &sent_uart_commands,
@@ -1148,6 +1171,9 @@ fn print_uart_agent_command(seq_id: u64, command: &[u8]) {
 
 fn write_inference_snapshot_txt(
     cfg: &AppConfig,
+    resp: &InferenceResponse,
+    power_lna_dbm: f32,
+    power_pa_dbm: f32,
     control_values: &uart_commands::AgentControlValues,
     valon_values: &valon_client::ValonControlValues,
     sent_uart_commands: &[String],
@@ -1171,12 +1197,25 @@ fn write_inference_snapshot_txt(
     };
 
     let content = format!(
-        "lna_voltage_v={}\nif_amp_gain_db={:.3}\nvalon_frequency_mhz={:.3}\nvalon_power_dbm={:.3}\nselected_filter={}\nselected_filter_uart_cmd=filter {}\nuart_commands_sent:\n{}\nuart_status_values:\n{}\n",
+        "seq_id={}\nstatus=ok\nsource=hardware\nstatus_code={}\nlna_class={}\nlna_voltage_v={}\nfilter_class={}\nselected_filter_mhz={:.3}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.3}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nprocessing_time_ms={:.3}\npower_lna_dbm={:.3}\npower_pa_dbm={:.3}\npower_lna_raw={:.3}\npower_pa_raw={:.3}\nselected_filter_uart_cmd=filter {}\nuart_commands_sent:\n{}\nuart_status_values:\n{}\n",
+        resp.seq_id,
+        resp.status_code,
+        resp.lna_class,
         control_values.lna_voltage,
-        control_values.if_amp_value,
+        resp.filter_class,
+        control_values.filter_mhz,
+        control_values.filter_mhz,
+        resp.center_class,
         valon_values.lo_freq_mhz,
         valon_values.rf_level_dbm,
-        control_values.filter_mhz,
+        resp.mixer_dbm,
+        control_values.if_amp_value,
+        resp.evm_value,
+        resp.processing_time_ms,
+        power_lna_dbm,
+        power_pa_dbm,
+        power_lna_dbm,
+        power_pa_dbm,
         control_values.filter_mhz,
         commands_block,
         status_block,
@@ -1200,6 +1239,17 @@ fn write_text_atomic(path: &str, content: &str) -> io::Result<()> {
     let tmp_path = format!("{}.tmp", path);
     fs::write(&tmp_path, content)?;
     fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+fn append_to_file(path: &str, line: &str) -> io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{}", line)?;
     Ok(())
 }
 
@@ -1348,10 +1398,11 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
 
     // Connect to inference worker if enabled
     let mut inference_client = if cfg.enable_inference {
-        match InferenceSocketClient::new(&cfg.socket_path).connect() {
+        let mut client = InferenceSocketClient::new(&cfg.socket_path);
+        match client.connect() {
             Ok(_) => {
                 println!("[digital_twin] Connected to inference worker");
-                Some(InferenceSocketClient::new(&cfg.socket_path))
+                Some(client)
             }
             Err(e) => {
                 eprintln!("[digital_twin] Warning: Could not connect to inference worker: {}", e);
@@ -1389,7 +1440,7 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
         let lo_power = -10.0 + ((cycle as f32 % 30.0) - 15.0);
         let pa_gain = 5.0 + ((cycle as f32 % 21.0) - 10.5);
 
-        seq_id += 1;
+        seq_id += 1;  // Increment seq_id at the START of the loop iteration, BEFORE processing
 
         // Call RF chain worker
         match rfchain_client.process_signal(
@@ -1408,6 +1459,34 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                         rf_result.power_post_pa_dbm, rf_result.processing_time_ms
                     );
                 }
+
+                if cfg.enable_inference && inference_client.is_none() && (seq_id % 20 == 0) {
+                    let mut client = InferenceSocketClient::new(&cfg.socket_path);
+                    if client.connect().is_ok() {
+                        println!("[digital_twin] Reconnected to inference worker");
+                        inference_client = Some(client);
+                    }
+                }
+
+                let default_filter_class = if bandwidth_hz <= 1.5e6 {
+                    0
+                } else if bandwidth_hz <= 12e6 {
+                    1
+                } else {
+                    2
+                };
+
+                let mut status_code: i32 = 0;
+                let mut lna_class: u8 = if lna_voltage >= 4.0 { 1 } else { 0 };
+                let mut filter_class: u8 = default_filter_class;
+                let mut center_class: u8 = 1;
+                let mut mixer_dbm: f32 = lo_power;
+                let mut ifamp_db: f32 = pa_gain;
+                let mut agent_evm_value: f32 = rf_result.evm_percent;
+                let mut lna_voltage_v: f32 = lna_voltage;
+                let mut selected_filter_mhz: f32 = bandwidth_hz / 1e6;
+                let mut lo_center_mhz: f32 = 2420.0;
+                let mut inference_ok = false;
 
                 // Optionally send to inference worker for agent recommendations
                 if let Some(ref mut inf_client) = inference_client {
@@ -1434,22 +1513,75 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                                     result.mixer_dbm, result.ifamp_db, result.evm_value
                                 );
                             }
+                            // Log to file
+                            let log_msg = format!(
+                                "[seq_id={}] agent_inference: LNA={}, Filter={}, Mixer={:.3}dBm, IFAmp={:.3}dB, EVM={:.3}%, Status={}",
+                                seq_id, result.lna_class, result.filter_class,
+                                result.mixer_dbm, result.ifamp_db, result.evm_value, result.status_code
+                            );
+                            let _ = append_to_file("./ai_inference.txt", &log_msg);
+
+                            inference_ok = true;
+                            status_code = result.status_code;
+                            lna_class = result.lna_class;
+                            filter_class = result.filter_class;
+                            center_class = result.center_class;
+                            mixer_dbm = result.mixer_dbm;
+                            ifamp_db = result.ifamp_db;
+                            agent_evm_value = result.evm_value;
+
+                            lna_voltage_v = match result.lna_class {
+                                0 => 3.0,
+                                1 => 5.0,
+                                _ => 3.0,
+                            };
+                            selected_filter_mhz = match result.filter_class {
+                                0 => 1.0,
+                                1 => 10.0,
+                                2 => 20.0,
+                                _ => 10.0,
+                            };
+                            lo_center_mhz = match result.center_class {
+                                0 => 2405.0,
+                                1 => 2420.0,
+                                2 => 2435.0,
+                                _ => 2420.0,
+                            };
                         }
                         Err(e) => {
                             eprintln!("[digital_twin] Inference error: {}", e);
+                            inference_client = None;
+                            status_code = 1;
                         }
                     }
+                } else {
+                    status_code = 1;
                 }
 
-                // Write results to file for telemetry
-                let _ = fs::write(
-                    &cfg.inference_txt_path,
-                    format!(
-                        "seq_id: {}\nstatus: {}\nevm: {:.2}\npower_pre_lna: {:.2}\npower_post_pa: {:.2}\n",
-                        seq_id, rf_result.status, rf_result.evm_percent,
-                        rf_result.power_pre_lna_dbm, rf_result.power_post_pa_dbm
-                    ),
+                let snapshot = format!(
+                    "seq_id={}\nstatus={}\nsource=digital_twin\ninference_ok={}\nstatus_code={}\nlna_class={}\nlna_voltage_v={:.1}\nfilter_class={}\nselected_filter_mhz={:.1}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.3}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nagent_evm_value={:.3}\npower_lna_dbm={:.3}\npower_pa_dbm={:.3}\nprocessing_time_ms={:.3}\n",
+                    seq_id,
+                    rf_result.status,
+                    if inference_ok { 1 } else { 0 },
+                    status_code,
+                    lna_class,
+                    lna_voltage_v,
+                    filter_class,
+                    selected_filter_mhz,
+                    selected_filter_mhz as i32,
+                    center_class,
+                    lo_center_mhz,
+                    mixer_dbm,
+                    mixer_dbm,
+                    ifamp_db,
+                    rf_result.evm_percent,
+                    agent_evm_value,
+                    rf_result.power_pre_lna_dbm,
+                    rf_result.power_post_pa_dbm,
+                    rf_result.processing_time_ms,
                 );
+
+                let _ = write_text_atomic(&cfg.inference_txt_path, &snapshot);
             }
             Err(e) => {
                 eprintln!("[digital_twin] Error processing RF chain: {}", e);

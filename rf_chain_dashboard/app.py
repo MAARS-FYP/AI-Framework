@@ -80,6 +80,7 @@ class RFChainDashboardBackend:
         
         self.rfchain_conn: Optional[socket.socket] = None
         self.inference_conn: Optional[socket.socket] = None
+        self.rfchain_response_timeout_sec = 2.0
         
         # Connected WebSocket clients
         self.clients: Set[WebSocketServerProtocol] = set()
@@ -140,8 +141,9 @@ class RFChainDashboardBackend:
     def _recv_message_from_socket(self, conn: socket.socket) -> Optional[tuple]:
         """Receive message from socket (non-blocking, with timeout)."""
         try:
-            # Set a short timeout for non-blocking receiving
-            conn.settimeout(0.1)
+            # RF chain processing can take longer than a typical UI polling interval,
+            # so use a more forgiving timeout before treating the worker as unresponsive.
+            conn.settimeout(self.rfchain_response_timeout_sec)
             msg_type, payload = recv_message(conn)
             return msg_type, payload
         except socket.timeout:

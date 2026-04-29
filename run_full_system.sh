@@ -20,9 +20,12 @@ CHECKPOINT_PATH="${ROOT_DIR}/checkpoints/best_model.pt"
 SCALERS_PATH="${ROOT_DIR}/checkpoints/scalers.joblib"
 WORKER_DEVICE="auto"
 
-PYTHON_BIN_DEFAULT="${ROOT_DIR}/.venv/bin/python"
+PYTHON_BIN_DEFAULT="${ROOT_DIR}/.fyp/bin/python"
+PYTHON_BIN_FALLBACK="${ROOT_DIR}/.venv/bin/python"
 if [[ -x "${PYTHON_BIN_DEFAULT}" ]]; then
   PYTHON_BIN="${PYTHON_BIN_DEFAULT}"
+elif [[ -x "${PYTHON_BIN_FALLBACK}" ]]; then
+  PYTHON_BIN="${PYTHON_BIN_FALLBACK}"
 else
   PYTHON_BIN="python3"
 fi
@@ -55,6 +58,7 @@ RFCHAIN_WORKER_PID=""
 RFCHAIN_DASHBOARD_PID=""
 TELEMETRY_DASHBOARD_PID=""
 RF_DASHBOARD_HTTP_PID=""
+TELEMETRY_SENDER_PID=""
 
 VALON_SOCKET_PATH="/tmp/valon5019.sock"
 VALON_PORT=""
@@ -273,6 +277,12 @@ cleanup() {
     kill -9 "${TELEMETRY_DASHBOARD_PID}" >/dev/null 2>&1 || true
   fi
 
+  if [[ -n "${TELEMETRY_SENDER_PID}" ]] && kill -0 "${TELEMETRY_SENDER_PID}" 2>/dev/null; then
+    kill "${TELEMETRY_SENDER_PID}" >/dev/null 2>&1 || true
+    sleep 0.2
+    kill -9 "${TELEMETRY_SENDER_PID}" >/dev/null 2>&1 || true
+  fi
+
   if [[ -n "${RF_DASHBOARD_HTTP_PID}" ]] && kill -0 "${RF_DASHBOARD_HTTP_PID}" 2>/dev/null; then
     kill "${RF_DASHBOARD_HTTP_PID}" >/dev/null 2>&1 || true
     sleep 0.2
@@ -401,6 +411,14 @@ start_telemetry_dashboard() {
       --ws-path /telemetry \
       >/tmp/telemetry_dashboard_bridge.log 2>&1 &
     TELEMETRY_DASHBOARD_PID=$!
+
+    "${PYTHON_BIN}" udp_telemetry_sender.py \
+      --host 127.0.0.1 \
+      --port 9000 \
+      --hz 15 \
+      --source-file "${ROOT_DIR}/inference_results.txt" \
+      >/tmp/telemetry_dashboard_sender.log 2>&1 &
+    TELEMETRY_SENDER_PID=$!
     wait
   ) &
   echo "[launcher] telemetry dashboard started"
@@ -508,6 +526,15 @@ run_rust() {
     )
   elif [[ "${MODE}" == "digital_twin" ]]; then
     echo "[launcher] starting in digital_twin mode"
+    rust_args+=(
+      --rf-chain-cycles "${RF_CHAIN_CYCLES}"
+      --rf-chain-interval-ms "${RF_CHAIN_INTERVAL_MS}"
+    )
+    if [[ "${RF_CHAIN_ENABLE_INFERENCE}" == "1" ]]; then
+      rust_args+=(--enable-inference)
+    else
+      rust_args+=(--disable-inference)
+    fi
   else
     rust_args+=(
       --uart-port "${UART_PORT}"

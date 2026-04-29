@@ -15,35 +15,26 @@ DATA_FILE = "data/dataset.npz"
 
 def apply_pa_distortion(x, gain_db=10.0):
     """
-    Simulates the LMH6401 DVGA based on datasheet specifications.
+    Simulates a Power Amplifier using a Modified Rapp Model with Memory.
     
     Args:
-        x: Input complex signal (Analytic IF)
-        gain_db (float): Requested gain. 
+        x: Input signal (Complex Baseband/IF)
+        gain_db (float): Linear Gain in dB.
     """
-    gain_db_clamped = np.clip(np.round(gain_db), -6, 26)
-    G = 10**(gain_db_clamped / 20.0)
-    v_sat = 4.6 
-    smoothness = 4.0
-    
+
+    v_sat = 2.0 
+    smoothness = 2.0
+    G = 10**(gain_db / 20.0)
     x_amp = np.abs(x)
     scaled_mag = (x_amp * G) / (v_sat + 1e-12)
     denominator = (1 + scaled_mag**(2 * smoothness)) ** (1 / (2 * smoothness))
     y_rapp = (x * G) / (denominator + 1e-12)
-
-    k2 = 0.00022  # 10^(-73/20)
-    k3 = 0.00010  # 10^(-80/20)
-    
-    y_dist = y_rapp + k2 * (y_rapp**2) + k3 * (y_rapp**3)
-
     pad = np.zeros(2, dtype=np.complex128)
-    y_d1 = np.concatenate([pad[:1], y_dist[:-1]])
-    y_d2 = np.concatenate([pad[:2], y_dist[:-2]])
-    
-    y = y_dist + (0.001 * y_d1) + (-0.0005 * y_d2)
+    x_d1 = np.concatenate([pad[:1], x[:-1]])
+    x_d2 = np.concatenate([pad[:2], x[:-2]])
+    y = y_rapp + (0.05 * G * x_d1) + (-0.01 * G * x_d2)
     
     return y
-
 # 2. Feature Extraction (Preprocessor)
 
 def prepare_features(input_sig, memory_depth=5, nonlinear_degree=5, aux_param=None):

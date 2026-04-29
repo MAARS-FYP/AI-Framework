@@ -26,7 +26,17 @@ class SharedMemoryRingBuffer:
     def __init__(self, spec: SharedMemoryRingSpec, create: bool = False):
         self.spec = spec
         self._owner = create
-        self.shm = SharedMemory(name=spec.name, create=create, size=spec.total_bytes if create else 0)
+        if not create:
+            self.shm = SharedMemory(name=spec.name, create=False)
+            return
+
+        try:
+            self.shm = SharedMemory(name=spec.name, create=True, size=spec.total_bytes)
+        except FileExistsError:
+            stale = SharedMemory(name=spec.name, create=False)
+            stale.close()
+            stale.unlink()
+            self.shm = SharedMemory(name=spec.name, create=True, size=spec.total_bytes)
 
     def close(self):
         self.shm.close()
