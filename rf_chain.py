@@ -180,7 +180,7 @@ class RFChain:
         pa_in = rx_if_analytic  * gain_linear
         return pa_in
 
-    def generate_variable_bw_ofdm(self, bandwidth_hz: float, num_symbols: int = 30) -> np.ndarray:
+    def generate_variable_bw_ofdm(self, bandwidth_hz: float, num_symbols: int = 30):
         """
         Generates an OFDM signal with variable bandwidth.
         The sampling rate remains FS_BB, but we zero out subcarriers
@@ -191,19 +191,26 @@ class RFChain:
         # (Subcarrier spacing = FS_BB / n_fft)
         subcarrier_spacing = FS_BB / n_fft
         num_active = int(bandwidth_hz / subcarrier_spacing)
+        num_active = max(1, num_active)
         num_active = min(num_active, n_fft - 100) # Leave some guard band
         
         symbols = []
+        qam_symbols = []
         for _ in range(num_symbols):
             # Generate QPSK data for active subcarriers
             data = (np.random.randint(0, 2, num_active)*2 - 1) + \
                    1j*(np.random.randint(0, 2, num_active)*2 - 1)
+            qam_symbols.append(data.astype(np.complex64))
             
             # Map to FFT bins (centered around DC)
             spectrum = np.zeros(n_fft, dtype=complex)
-            half = num_active // 2
-            spectrum[1:half+1] = data[:half]
-            spectrum[-half:] = data[half:]
+            pos_bins = num_active // 2
+            neg_bins = num_active - pos_bins
+
+            if pos_bins > 0:
+                spectrum[1:pos_bins + 1] = data[:pos_bins]
+            if neg_bins > 0:
+                spectrum[-neg_bins:] = data[pos_bins:pos_bins + neg_bins]
             
             # IFFT to baseband
             time_domain = np.fft.ifft(spectrum)
@@ -213,7 +220,8 @@ class RFChain:
             symbol = np.concatenate([time_domain[-cp_len:], time_domain])
             symbols.append(symbol)
             
-        return np.concatenate(symbols)
+        base_sig = np.concatenate(symbols)
+        return base_sig, np.concatenate(qam_symbols), num_active, cp_len
 
     @staticmethod
     def _dbm_to_linear(power_dbm: float) -> float:

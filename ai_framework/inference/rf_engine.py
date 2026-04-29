@@ -172,7 +172,7 @@ class RFChainEngine:
             # Generate base OFDM signal with variable bandwidth
             logger.debug(f"Generating OFDM: BW={bandwidth_hz/1e6}MHz, {num_symbols} symbols")
             base_sig, qam_symbols, num_active, cp_len = self.rf_chain.generate_variable_bw_ofdm(
-                bandwidth_hz, FS, num_symbols=num_symbols
+                bandwidth_hz, num_symbols=num_symbols
             )
 
             # Normalize generated OFDM signal to requested pre-LNA input power.

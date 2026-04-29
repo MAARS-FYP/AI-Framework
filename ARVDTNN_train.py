@@ -104,7 +104,7 @@ if GENERATE_DATA:
 
     for bw in bandwidths:
         # Generate base signal for this bandwidth
-        base_sig, _, _, _ = rf_chain.generate_variable_bw_ofdm(bw, FS, num_symbols=30)
+        base_sig, _, _, _ = rf_chain.generate_variable_bw_ofdm(bw, num_symbols=30)
         
         for pwr in powers:
             print(f"   Processing BW: {bw/1e6}MHz, Pwr: {pwr:.1f}dBm... ({iteration}/{total_iterations})")
