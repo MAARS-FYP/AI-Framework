@@ -130,6 +130,7 @@
             border-radius: 3px;
             background: #e0e0e0;
             outline: none;
+            appearance: none;
             -webkit-appearance: none;
         }
 
@@ -415,55 +416,55 @@
                 </div>
             </div>
 
-            <!-- Measurements -->
+            <!-- Measurements
             <div class="panel">
                 <h2>📊 Real-Time Measurements</h2>
                 <div class="metrics-grid">
                     <div class="metric-card">
                         <div class="metric-label">Pre-LNA Power</div>
                         <div class="metric-value">
-                            {{ rfchainData ? ((rfchainData.power_pre_lna_dbm ?? rfchainData.power_lna_dbm ?? rfchainData.power_lna_raw)?.toFixed(1) ?? '--') : '--' }}
+                            {{ formatMetric(rfchainData, ['power_pre_lna_dbm', 'power_lna_dbm', 'power_lna_raw'], 1) }}
                             <span class="metric-unit">dBm</span>
                         </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Post-PA Power</div>
                         <div class="metric-value">
-                            {{ rfchainData ? ((rfchainData.power_post_pa_dbm ?? rfchainData.power_pa_dbm ?? rfchainData.power_pa_raw)?.toFixed(1) ?? '--') : '--' }}
+                            {{ formatMetric(rfchainData, ['power_post_pa_dbm', 'power_pa_dbm', 'power_pa_raw'], 1) }}
                             <span class="metric-unit">dBm</span>
                         </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">EVM</div>
                         <div class="metric-value">
-                            {{ rfchainData ? ((rfchainData.evm_percent ?? rfchainData.evm_value)?.toFixed(2) ?? '--') : '--' }}
+                            {{ formatMetric(rfchainData, ['evm_percent', 'evm_value'], 2) }}
                             <span class="metric-unit">%</span>
                         </div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-label">Processing Time</div>
                         <div class="metric-value">
-                            {{ rfchainData ? rfchainData.processing_time_ms.toFixed(2) : '--' }}
+                            {{ formatMetric(rfchainData, ['processing_time_ms'], 2) }}
                             <span class="metric-unit">ms</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Visualizations -->
+            Visualizations
             <div class="layout">
                 <div class="panel">
                     <h2>🔵 I/Q Constellation</h2>
-                    <div class="constellation" ref="constellationCanvas"></div>
+                    <canvas class="constellation" ref="constellationCanvas"></canvas>
                 </div>
 
                 <div class="panel">
                     <h2>📈 Magnitude Spectrum</h2>
-                    <div class="spectrum" ref="spectrumCanvas"></div>
+                    <canvas class="spectrum" ref="spectrumCanvas"></canvas>
                 </div>
             </div>
 
-            <!-- Agent Recommendations -->
+            Agent Recommendations
             <div v-if="agentData" class="panel">
                 <h2>🤖 AI Agent Recommendations</h2>
                 <div class="agent-output">
@@ -489,7 +490,7 @@
                         <strong>{{ agentData.processing_time_ms.toFixed(2) }} ms</strong>
                     </div>
                 </div>
-            </div>
+            </div> -->
 
             <!-- Connection Status -->
             <div v-if="error" class="panel" style="border-left: 4px solid #dc3545;">
@@ -555,7 +556,7 @@
                             const msg = JSON.parse(event.data);
                             
                             if (msg.type === 'rfchain_update') {
-                                this.rfchainData = msg.rfchain;
+                                this.rfchainData = this.normalizeRfchainPayload(msg);
                                 if (msg.agent) {
                                     this.agentData = msg.agent;
                                 }
@@ -584,6 +585,60 @@
                     this.params[key] = value;
                     this.updateParams();
                 },
+                normalizeRfchainPayload(message) {
+                    if (!message || typeof message !== 'object') {
+                        return null;
+                    }
+
+                    const candidates = [
+                        message.rfchain,
+                        message.payload,
+                        message.data,
+                        message.telemetry,
+                        message.result,
+                        message.value,
+                        message,
+                    ];
+
+                    for (const candidate of candidates) {
+                        if (candidate && typeof candidate === 'object') {
+                            const hasMetrics = [
+                                'power_pre_lna_dbm',
+                                'power_lna_dbm',
+                                'power_lna_raw',
+                                'power_post_pa_dbm',
+                                'power_pa_dbm',
+                                'power_pa_raw',
+                                'evm_percent',
+                                'evm_value',
+                                'processing_time_ms',
+                                'i_samples',
+                                'q_samples',
+                            ].some((key) => candidate[key] !== undefined);
+
+                            if (hasMetrics) {
+                                return candidate;
+                            }
+                        }
+                    }
+
+                    return null;
+                },
+                formatMetric(source, keys, digits = 2) {
+                    if (!source) {
+                        return '--';
+                    }
+
+                    for (const key of keys) {
+                        const value = source[key];
+                        const numeric = Number(value);
+                        if (Number.isFinite(numeric)) {
+                            return numeric.toFixed(digits);
+                        }
+                    }
+
+                    return '--';
+                },
                 updateParams() {
                     if (this.connected && this.ws && this.ws.readyState === WebSocket.OPEN) {
                         const msg = {
@@ -606,18 +661,18 @@
                 drawConstellation() {
                     const canvas = this.$refs.constellationCanvas;
                     if (!canvas) return;
-                    
+
                     const ctx = canvas.getContext('2d');
                     const width = canvas.offsetWidth;
                     const height = canvas.offsetHeight;
-                    
+
                     canvas.width = width;
                     canvas.height = height;
-                    
+
                     // Clear background
                     ctx.fillStyle = '#fff';
                     ctx.fillRect(0, 0, width, height);
-                    
+
                     // Draw grid
                     ctx.strokeStyle = '#e0e0e0';
                     ctx.lineWidth = 1;
@@ -629,39 +684,49 @@
                     ctx.moveTo(0, centerY);
                     ctx.lineTo(width, centerY);
                     ctx.stroke();
-                    
+
                     // Plot IQ points
-                    const i_samples = this.rfchainData.i_samples;
-                    const q_samples = this.rfchainData.q_samples;
+                    const i_samples = Array.isArray(this.rfchainData.i_samples) ? this.rfchainData.i_samples : [];
+                    const q_samples = Array.isArray(this.rfchainData.q_samples) ? this.rfchainData.q_samples : [];
                     const scale = 50;
-                    
+
                     ctx.fillStyle = '#667eea';
                     ctx.globalAlpha = 0.6;
-                    
+
+                    if (i_samples.length === 0 || q_samples.length === 0) {
+                        ctx.globalAlpha = 1;
+                        ctx.fillStyle = '#999';
+                        ctx.font = '14px Segoe UI, sans-serif';
+                        ctx.fillText('Waiting for IQ samples...', 20, 30);
+                        return;
+                    }
+
                     for (let i = 0; i < Math.min(i_samples.length, 1000); i += 4) {
                         const x = centerX + i_samples[i] * scale;
                         const y = centerY - q_samples[i] * scale;
-                        
+
                         ctx.beginPath();
                         ctx.arc(x, y, 2, 0, 2 * Math.PI);
                         ctx.fill();
                     }
+
+                    ctx.globalAlpha = 1;
                 },
                 drawSpectrum() {
                     const canvas = this.$refs.spectrumCanvas;
                     if (!canvas) return;
-                    
+
                     const ctx = canvas.getContext('2d');
                     const width = canvas.offsetWidth;
                     const height = canvas.offsetHeight;
-                    
+
                     canvas.width = width;
                     canvas.height = height;
-                    
+
                     // Clear background
                     ctx.fillStyle = '#fff';
                     ctx.fillRect(0, 0, width, height);
-                    
+
                     // Draw axes
                     ctx.strokeStyle = '#333';
                     ctx.lineWidth = 2;
@@ -670,30 +735,37 @@
                     ctx.lineTo(40, height - 30);
                     ctx.lineTo(width - 10, height - 30);
                     ctx.stroke();
-                    
+
                     // Compute magnitude spectrum
-                    const i_samples = this.rfchainData.i_samples;
-                    const q_samples = this.rfchainData.q_samples;
-                    const n = Math.min(i_samples.length, 512);
-                    
+                    const i_samples = Array.isArray(this.rfchainData.i_samples) ? this.rfchainData.i_samples : [];
+                    const q_samples = Array.isArray(this.rfchainData.q_samples) ? this.rfchainData.q_samples : [];
+                    const n = Math.min(i_samples.length, q_samples.length, 512);
+
+                    if (n === 0) {
+                        ctx.fillStyle = '#999';
+                        ctx.font = '14px Segoe UI, sans-serif';
+                        ctx.fillText('Waiting for spectrum samples...', 50, 30);
+                        return;
+                    }
+
                     let spectrum = new Array(n).fill(0);
                     for (let i = 0; i < n; i++) {
                         spectrum[i] = Math.sqrt(i_samples[i]**2 + q_samples[i]**2);
                     }
-                    
+
                     // Normalize
                     const maxVal = Math.max(...spectrum);
-                    spectrum = spectrum.map(v => (v / maxVal) * (height - 40));
-                    
+                    spectrum = spectrum.map(v => (v / (maxVal || 1)) * (height - 40));
+
                     // Draw spectrum
                     ctx.strokeStyle = '#667eea';
                     ctx.lineWidth = 1;
                     ctx.beginPath();
-                    
+
                     for (let i = 0; i < spectrum.length; i++) {
                         const x = 40 + (i / spectrum.length) * (width - 50);
                         const y = height - 30 - spectrum[i];
-                        
+
                         if (i === 0) {
                             ctx.moveTo(x, y);
                         } else {

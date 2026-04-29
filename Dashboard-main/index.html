@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>
       Multi-Agent Neurosymbolic AI for Self-Adapting RF Transceivers
     </title>
@@ -841,17 +844,17 @@
 
           <article class="panel measurement" id="panel-evm">
             <div class="panel-head">
-              <h2>EVM / Signal Quality</h2>
+              <h2>EVM / Signal Quality (dB)</h2>
               <span class="kind">Measurement</span>
             </div>
             <div class="value-row">
               <span class="mono value" id="value-evm">--.-</span>
-              <span class="unit">%</span>
+              <span class="unit">dB</span>
             </div>
             <div class="spark-wrap">
               <canvas class="sparkline" id="evm-sparkline"></canvas>
             </div>
-            <div class="subtle">Connected to FPGA observer</div>
+            <!-- <div class="subtle">Connected to FPGA observer</div> -->
             <span
               class="anchor-point panel-anchor-left"
               id="anchor-panel-evm"
@@ -1501,7 +1504,24 @@
 
           try {
             const parsed = JSON.parse(raw);
-            return parsed && typeof parsed === "object" ? parsed : null;
+            if (!parsed || typeof parsed !== "object") {
+              return null;
+            }
+
+            if (parsed.telemetry && typeof parsed.telemetry === "object") {
+              return parsed.telemetry;
+            }
+            if (parsed.payload && typeof parsed.payload === "object") {
+              return parsed.payload;
+            }
+            if (parsed.data && typeof parsed.data === "object") {
+              return parsed.data;
+            }
+            if (parsed.rfchain && typeof parsed.rfchain === "object") {
+              return parsed.rfchain;
+            }
+
+            return parsed;
           } catch (_error) {
             return null;
           }
@@ -1544,6 +1564,26 @@
           state.lastTelemetryAt = performance.now();
           updateArrivalRate(state.lastTelemetryAt, true);
 
+          const powerLna = pickMetric(payload, [
+            "power_lna_raw",
+            "power_lna_dbm",
+            "power_pre_lna_dbm",
+            "power_pre_lna",
+          ]);
+          const powerIfamp = pickMetric(payload, [
+            "power_pa_raw",
+            "power_pa_dbm",
+            "power_post_pa_dbm",
+            "power_post_pa",
+          ]);
+          const evmValue = pickMetric(payload, ["evm_value", "evm_percent", "evm"]);
+          const evmDb = evmPercentToDb(evmValue);
+          const processingTime = pickMetric(payload, [
+            "processing_time_ms",
+            "processing_ms",
+            "latency_ms",
+          ]);
+
           const seqId = toNumber(payload.seq_id);
           const statusCode = toNumber(payload.status_code);
           const lnaClass = toNumber(payload.lna_class);
@@ -1556,19 +1596,12 @@
           dom.status.textContent = Number.isFinite(statusCode)
             ? String(Math.trunc(statusCode))
             : "-";
-          dom.processing.textContent = formatFixed(
-            payload.processing_time_ms,
-            2,
-            " ms",
-          );
 
-          const powerLna = payload.power_lna_raw ?? payload.power_pre_lna_dbm ?? payload.power_lna_dbm;
-          const powerIfamp = payload.power_pa_raw ?? payload.power_post_pa_dbm ?? payload.power_pa_dbm;
-          const evmValue = payload.evm_value ?? payload.evm_percent;
+          dom.processing.textContent = formatFixed(processingTime, 2, " ms");
 
           dom.powerLna.textContent = formatFixed(powerLna, 1);
           dom.powerIfamp.textContent = formatFixed(powerIfamp, 1);
-          dom.evm.textContent = formatFixed(evmValue, 2);
+          dom.evm.textContent = formatFixed(evmDb, 2, " dB");
 
           dom.lnaClass.textContent = lookupLabel(LNA_CLASS_MAP, lnaClass);
           dom.filterClass.textContent = lookupLabel(
@@ -1591,7 +1624,7 @@
 
           addHistorySample(state.lnaPowerHistory, powerLna);
           addHistorySample(state.ifampPowerHistory, powerIfamp);
-          addHistorySample(state.evmHistory, evmValue);
+          addHistorySample(state.evmHistory, evmDb);
           drawAllSparklines();
 
           updateStatusStyling(statusCode);
@@ -1618,9 +1651,52 @@
           return Number.isFinite(num) ? num : NaN;
         }
 
+        function pickMetric(payload, keys) {
+          const visited = new Set();
+
+          function visit(node, depth) {
+            if (!node || typeof node !== "object" || visited.has(node) || depth > 4) {
+              return NaN;
+            }
+
+            visited.add(node);
+
+            for (const key of keys) {
+              if (!Object.prototype.hasOwnProperty.call(node, key)) {
+                continue;
+              }
+
+              const value = toNumber(node[key]);
+              if (Number.isFinite(value)) {
+                return value;
+              }
+            }
+
+            for (const value of Object.values(node)) {
+              const found = visit(value, depth + 1);
+              if (Number.isFinite(found)) {
+                return found;
+              }
+            }
+
+            return NaN;
+          }
+
+          return visit(payload, 0);
+        }
+
         function formatFixed(value, precision, suffix = "") {
           const num = toNumber(value);
           return Number.isFinite(num) ? num.toFixed(precision) + suffix : "--";
+        }
+
+        function evmPercentToDb(value) {
+          const percent = toNumber(value);
+          if (!Number.isFinite(percent) || percent <= 0) {
+            return NaN;
+          }
+
+          return 20 * Math.log10(percent / 100);
         }
 
         function lookupLabel(map, key) {
@@ -1760,8 +1836,8 @@
             sparkContexts.evm,
             state.evmHistory,
             {
-              minHint: 0.4,
-              maxHint: 8.5,
+              minHint: -4.0,
+              maxHint: 0.5,
               stroke: "#8db7a4",
               baseline: "rgba(107, 142, 126, 0.38)",
             },
