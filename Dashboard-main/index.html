@@ -903,8 +903,8 @@
               <span class="kind">Control</span>
             </div>
             <div class="control-row">
-              <span class="label">Center Class</span>
-              <span class="field mono" id="value-center-class">--</span>
+              <span class="label">Oscillator Freq</span>
+              <span class="field mono" id="value-oscillator-freq">--.-</span>
             </div>
             <div class="control-row">
               <span class="label">Mixer dBm</span>
@@ -1136,7 +1136,7 @@
           powerIfamp: document.getElementById("value-power-ifamp"),
           evm: document.getElementById("value-evm"),
           lnaClass: document.getElementById("value-lna-class"),
-          centerClass: document.getElementById("value-center-class"),
+          oscillatorFreq: document.getElementById("value-oscillator-freq"),
           mixerDbm: document.getElementById("value-mixer-dbm"),
           filterClass: document.getElementById("value-filter-class"),
           ifampDb: document.getElementById("value-ifamp-db"),
@@ -1576,6 +1576,11 @@
             "power_post_pa_dbm",
             "power_post_pa",
           ]);
+          const mixerDbm = pickMetric(payload, [
+            "mixer_dbm",
+            "lo_power_dbm",
+            "valon_power_dbm",
+          ]);
           const evmValue = pickMetric(payload, ["evm_value", "evm_percent", "evm"]);
           const evmDb = evmPercentToDb(evmValue);
           const processingTime = pickMetric(payload, [
@@ -1589,6 +1594,11 @@
           const lnaClass = toNumber(payload.lna_class);
           const filterClass = toNumber(payload.filter_class);
           const centerClass = toNumber(payload.center_class);
+          const loCenterMhz = pickMetric(payload, [
+            "lo_center_mhz",
+            "valon_frequency_mhz",
+            "center_freq_hz",
+          ]);
 
           dom.seq.textContent = Number.isFinite(seqId)
             ? String(Math.trunc(seqId))
@@ -1608,12 +1618,11 @@
             FILTER_CLASS_MAP,
             filterClass,
           );
-          dom.centerClass.textContent = lookupLabel(
-            CENTER_CLASS_MAP,
-            centerClass,
-          );
+          dom.oscillatorFreq.textContent = Number.isFinite(loCenterMhz)
+            ? formatFixed(loCenterMhz, 1, " MHz")
+            : lookupLabel(CENTER_CLASS_MAP, centerClass);
 
-          dom.mixerDbm.textContent = formatFixed(payload.mixer_dbm, 1);
+          dom.mixerDbm.textContent = formatFixed(mixerDbm, 1);
           dom.ifampDb.textContent = formatFixed(payload.ifamp_db, 1);
 
           setMeter(dom.meterMixer, payload.mixer_dbm, RANGE_MIXER_DBM);

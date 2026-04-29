@@ -89,6 +89,7 @@ class SenderState:
         self.selected_filter_mhz = 10.0
         self.lo_center_mhz = 2420.0
         self.lo_power_dbm = -15.0
+        self.mixer_dbm = -15.0
         self.ifamp_db = 0.0
         self.power_lna_raw = -35.0
         self.power_pa_raw = -24.0
@@ -127,7 +128,8 @@ class SenderState:
         else:
             self.lo_center_mhz = float(CENTER_MHZ_BY_CLASS.get(self.center_class, self.lo_center_mhz))
 
-        self.lo_power_dbm = float(snapshot.get("lo_power_dbm", snapshot.get("valon_power_dbm", snapshot.get("mixer_dbm", self.lo_power_dbm))))
+        self.lo_power_dbm = float(snapshot.get("lo_power_dbm", snapshot.get("valon_power_dbm", self.lo_power_dbm)))
+        self.mixer_dbm = float(snapshot.get("mixer_dbm", snapshot.get("lo_power_dbm", snapshot.get("valon_power_dbm", self.mixer_dbm))))
         self.ifamp_db = float(snapshot.get("ifamp_db", snapshot.get("ifamp_value", self.ifamp_db)))
         
         self.power_lna_raw = float(
@@ -160,7 +162,7 @@ class SenderState:
             "center_class": self.center_class,
             "lo_center_mhz": round(self.lo_center_mhz, 3),
             "lo_power_dbm": round(self.lo_power_dbm, 2),
-            "mixer_dbm": round(self.lo_power_dbm, 2),
+            "mixer_dbm": round(self.mixer_dbm, 2),
             "ifamp_db": round(self.ifamp_db, 2),
             "power_lna_raw": round(self.power_lna_raw, 2),
             "power_pa_raw": round(self.power_pa_raw, 2),
@@ -214,7 +216,7 @@ def run_sender(
             
             if verbose or (sent % 30 == 0):
                 # Print abbreviated summary for standard logging
-                print(f"[telemetry seq={payload['seq_id']}] LNA={payload['power_lna_raw']} PA={payload['power_pa_raw']} EVM={payload['evm_value']} BW={payload['selected_filter_mhz']} RF={payload['lo_center_mhz']}")
+                print(f"[telemetry seq={payload['seq_id']}] LNA={payload['power_lna_raw']} PA={payload['power_pa_raw']} Mixer={payload['mixer_dbm']} EVM={payload['evm_value']} BW={payload['selected_filter_mhz']} RF={payload['lo_center_mhz']}")
                 # Detailed payload log for deep debugging
                 if verbose:
                     print(f"FULL PAYLOAD: {encoded.decode('utf-8')}")
