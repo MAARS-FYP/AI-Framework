@@ -1045,14 +1045,18 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                             inference_ok = true;
                             status_code = result.status_code;
                             lna_class = result.lna_class;
-                            filter_class = result.filter_class;
-                            center_class = result.center_class;
                             mixer_dbm = result.mixer_dbm;
                             ifamp_db = result.ifamp_db;
                             agent_evm_value = result.evm_value;
                             lna_voltage_v = match result.lna_class { 0 => 3.0, 1 => 5.0, _ => 3.0 };
-                            selected_filter_mhz = match result.filter_class { 0 => 1.0, 1 => 10.0, 2 => 20.0, _ => 10.0 };
-                            lo_center_mhz = match result.center_class { 0 => 2405.0, 1 => 2420.0, 2 => 2435.0, _ => 2420.0 };
+
+                            // Keep dashboard telemetry aligned with commanded RF settings in digital twin.
+                            // The AI center classifier operates on IF-centered spectra and can remain at class=1
+                            // when LO tracks RF center (manual mode), so use commanded RF center/bandwidth here.
+                            filter_class = default_filter_class;
+                            center_class = default_center_class;
+                            selected_filter_mhz = bandwidth_hz / 1e6;
+                            lo_center_mhz = center_freq_hz / 1e6;
                         }
                         Err(e) => {
                             eprintln!("[digital_twin] Inference error: {}", e);
