@@ -11,6 +11,7 @@ import argparse
 import logging
 import os
 import socket
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -66,13 +67,20 @@ class RFChainSocketWorker:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             server.bind(self.socket_path)
-            server.listen(1)
+            server.listen(5)
             print(f"[rf_chain_worker] listening on {self.socket_path}")
 
             while self._running:
-                conn, _ = server.accept()
-                with conn:
-                    self._handle_client(conn)
+                try:
+                    server.settimeout(1.0)
+                    conn, _ = server.accept()
+                    thread = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
+                    thread.start()
+                except socket.timeout:
+                    continue
+                except Exception as exc:
+                    if self._running:
+                        logger.error(f"Error accepting connection: {exc}")
         finally:
             server.close()
             if path.exists():
@@ -130,65 +138,66 @@ class RFChainSocketWorker:
         Args:
             conn: Connected socket
         """
-        def _safe_send(msg_type: int, payload: bytes = b"") -> bool:
-            try:
-                send_message(conn, msg_type, payload)
-                return True
-            except (BrokenPipeError, ConnectionError, OSError) as exc:
-                logger.info(f"Client disconnected during send: {exc}")
-                return False
-
-        while self._running:
-            try:
-                msg_type, payload = recv_message(conn)
-            except ConnectionError:
-                return
-            except Exception as exc:
-                logger.warning(f"Protocol error: {exc}")
-                if not _safe_send(MSG_ERROR_RESP, pack_error(f"protocol_error: {exc}")):
-                    return
-                return
-
-            # Handle ping
-            if msg_type == MSG_PING_REQ:
+        with conn:
+            def _safe_send(msg_type: int, payload: bytes = b"") -> bool:
                 try:
-                    seq_id = unpack_ping(payload)
-                    if not _safe_send(MSG_PING_RESP, payload):
-                        return
-                except Exception as exc:
-                    if not _safe_send(MSG_ERROR_RESP, pack_error(f"bad_ping: {exc}")):
-                        return
-                continue
+                    send_message(conn, msg_type, payload)
+                    return True
+                except (BrokenPipeError, ConnectionError, OSError) as exc:
+                    logger.info(f"Client disconnected during send: {exc}")
+                    return False
 
-            # Handle shutdown
-            if msg_type == MSG_SHUTDOWN_REQ:
-                logger.info("Shutdown requested")
-                self._running = False
-                if not _safe_send(MSG_SHUTDOWN_RESP, b""):
-                    return
-                return
-
-            # Handle RF chain request
-            if msg_type == MSG_RFCHAIN_REQ:
+            while self._running:
                 try:
-                    req = unpack_rfchain_request(payload)
-                    resp_payload = self._run_rfchain_request(req)
-                    if not _safe_send(MSG_RFCHAIN_RESP, resp_payload):
-                        return
-                except ValueError as exc:
-                    logger.warning(f"Bad RF chain request: {exc}")
-                    if not _safe_send(MSG_ERROR_RESP, pack_error(f"bad_request: {exc}")):
-                        return
+                    msg_type, payload = recv_message(conn)
+                except ConnectionError:
+                    return
                 except Exception as exc:
-                    logger.error(f"Internal error processing RF chain request: {exc}")
-                    if not _safe_send(MSG_ERROR_RESP, pack_error(f"internal_error: {exc}")):
+                    logger.warning(f"Protocol error: {exc}")
+                    if not _safe_send(MSG_ERROR_RESP, pack_error(f"protocol_error: {exc}")):
                         return
-                continue
+                    return
 
-            # Unknown message type
-            logger.warning(f"Unknown message type: {msg_type}")
-            if not _safe_send(MSG_ERROR_RESP, pack_error(f"unknown_msg_type: {msg_type}")):
-                return
+                # Handle ping
+                if msg_type == MSG_PING_REQ:
+                    try:
+                        seq_id = unpack_ping(payload)
+                        if not _safe_send(MSG_PING_RESP, payload):
+                            return
+                    except Exception as exc:
+                        if not _safe_send(MSG_ERROR_RESP, pack_error(f"bad_ping: {exc}")):
+                            return
+                    continue
+
+                # Handle shutdown
+                if msg_type == MSG_SHUTDOWN_REQ:
+                    logger.info("Shutdown requested")
+                    self._running = False
+                    if not _safe_send(MSG_SHUTDOWN_RESP, b""):
+                        return
+                    return
+
+                # Handle RF chain request
+                if msg_type == MSG_RFCHAIN_REQ:
+                    try:
+                        req = unpack_rfchain_request(payload)
+                        resp_payload = self._run_rfchain_request(req)
+                        if not _safe_send(MSG_RFCHAIN_RESP, resp_payload):
+                            return
+                    except ValueError as exc:
+                        logger.warning(f"Bad RF chain request: {exc}")
+                        if not _safe_send(MSG_ERROR_RESP, pack_error(f"bad_request: {exc}")):
+                            return
+                    except Exception as exc:
+                        logger.error(f"Internal error processing RF chain request: {exc}")
+                        if not _safe_send(MSG_ERROR_RESP, pack_error(f"internal_error: {exc}")):
+                            return
+                    continue
+
+                # Unknown message type
+                logger.warning(f"Unknown message type: {msg_type}")
+                if not _safe_send(MSG_ERROR_RESP, pack_error(f"unknown_msg_type: {msg_type}")):
+                    return
 
 
 def main():

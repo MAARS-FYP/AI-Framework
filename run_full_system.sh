@@ -68,6 +68,7 @@ VALON_LOG_LEVEL="INFO"
 VALON_WAIT_TIMEOUT_SEC="5"
 VALON_ENABLED_MODE="auto"
 INFERENCE_TXT_PATH="${ROOT_DIR}/inference_results.txt"
+DIGITAL_TWIN_PARAMS_PATH="/tmp/maars_digital_twin_params.txt"
 
 usage() {
   cat <<'EOF'
@@ -373,6 +374,8 @@ start_rfchain_dashboard() {
     cd "${ROOT_DIR}/rf_chain_dashboard"
     "${PYTHON_BIN}" app.py \
       --rfchain-socket "${RF_CHAIN_SOCKET_PATH}" \
+      --inference-socket "${SOCKET_PATH}" \
+      --params-path "${DIGITAL_TWIN_PARAMS_PATH}" \
       --host 127.0.0.1 \
       --port 8877
   ) >/tmp/rfchain_dashboard.log 2>&1 &
@@ -529,6 +532,7 @@ run_rust() {
     rust_args+=(
       --rf-chain-cycles "${RF_CHAIN_CYCLES}"
       --rf-chain-interval-ms "${RF_CHAIN_INTERVAL_MS}"
+      --digital-twin-params-path "${DIGITAL_TWIN_PARAMS_PATH}"
     )
     if [[ "${RF_CHAIN_ENABLE_INFERENCE}" == "1" ]]; then
       rust_args+=(--enable-inference)
@@ -582,7 +586,10 @@ run_rust() {
 }
 
 start_worker
-wait_for_socket
+if ! wait_for_socket; then
+  echo "[launcher] inference worker startup failed" >&2
+  exit 1
+fi
 start_valon_worker
 if ! wait_for_valon_socket; then
   echo "[launcher] valon startup failed" >&2

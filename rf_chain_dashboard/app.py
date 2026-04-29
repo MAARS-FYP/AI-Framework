@@ -63,6 +63,7 @@ class RFChainDashboardBackend:
         inference_socket: Optional[str] = None,
         ws_host: str = "127.0.0.1",
         ws_port: int = 8877,
+        params_path: str = "/tmp/maars_digital_twin_params.txt",
     ):
         """
         Initialize the dashboard backend.
@@ -72,11 +73,13 @@ class RFChainDashboardBackend:
             inference_socket: Path to inference worker socket (optional)
             ws_host: WebSocket server host
             ws_port: WebSocket server port
+            params_path: Path to shared parameter file
         """
         self.rfchain_socket = rfchain_socket
         self.inference_socket = inference_socket
         self.ws_host = ws_host
         self.ws_port = ws_port
+        self.params_path = params_path
         
         self.rfchain_conn: Optional[socket.socket] = None
         self.inference_conn: Optional[socket.socket] = None
@@ -295,7 +298,16 @@ class RFChainDashboardBackend:
                     if cmd.get("action") == "update_params":
                         params = cmd.get("params", {})
                         self.current_params.update(params)
-                        logger.debug(f"Parameters updated: {params}")
+                        logger.info(f"Manual parameter update received: {params}")
+                        
+                        # Write to shared file for software-framework coupling
+                        try:
+                            with open(self.params_path, "w") as f:
+                                for key, value in self.current_params.items():
+                                    f.write(f"{key}={value}\n")
+                            logger.info(f"Wrote parameters to {self.params_path}")
+                        except Exception as e:
+                            logger.error(f"Failed to write parameters to {self.params_path}: {e}")
                         
                         # Process RF chain with new parameters
                         rfchain_result = await self.process_rfchain()
@@ -447,6 +459,11 @@ async def main():
         default=None,
         help="Inference worker socket path (optional)",
     )
+    parser.add_argument(
+        "--params-path",
+        default="/tmp/maars_digital_twin_params.txt",
+        help="Shared parameter file path",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="WebSocket server host")
     parser.add_argument("--port", type=int, default=8877, help="WebSocket server port")
     args = parser.parse_args()
@@ -461,6 +478,7 @@ async def main():
         inference_socket=args.inference_socket,
         ws_host=args.host,
         ws_port=args.port,
+        params_path=args.params_path,
     )
     
     try:

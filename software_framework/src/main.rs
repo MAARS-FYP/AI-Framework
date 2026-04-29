@@ -95,6 +95,7 @@ struct AppConfig {
     enable_valon: bool,
     valon_socket_path: String,
     inference_txt_path: String,
+    digital_twin_params_path: String,
     rf_chain_socket_path: String,
     rf_chain_interval_ms: u64,
     rf_chain_cycles: u64,
@@ -156,6 +157,8 @@ impl Default for AppConfig {
                 .unwrap_or_else(|_| "/tmp/valon5019.sock".to_string()),
             inference_txt_path: std::env::var("MAARS_INFERENCE_TXT_PATH")
                 .unwrap_or_else(|_| "./inference_results.txt".to_string()),
+            digital_twin_params_path: std::env::var("MAARS_DIGITAL_TWIN_PARAMS_PATH")
+                .unwrap_or_else(|_| "/tmp/maars_digital_twin_params.txt".to_string()),
             rf_chain_socket_path: std::env::var("MAARS_RFCHAIN_SOCKET_PATH")
                 .unwrap_or_else(|_| "/tmp/maars_rfchain.sock".to_string()),
             rf_chain_interval_ms: 100,
@@ -224,6 +227,7 @@ Options:\n\
         --disable-valon                    Disable Valon LO socket output\n\
         --valon-socket-path <path>         Valon Unix socket path (default: /tmp/valon5019.sock)\n\
         --inference-txt-path <path>        Snapshot text file path (default: ./inference_results.txt)\n\
+        --digital-twin-params-path <path>  External parameters file path (default: /tmp/maars_digital_twin_params.txt)\n\
         --rf-chain-cycles <int>            Digital twin RF chain cycles (0 = run continuously, default: 0)\n\
         --rf-chain-interval-ms <int>       Delay between RF chain calls in ms (default: 100)\n\
                 --enable-constellation-plot        Launch the Python constellation plotter from Rust\n\
@@ -491,6 +495,13 @@ fn parse_args() -> Result<AppConfig, String> {
                     .ok_or("Missing value for --inference-txt-path")?
                     .to_string();
             }
+            "--digital-twin-params-path" => {
+                idx += 1;
+                cfg.digital_twin_params_path = args
+                    .get(idx)
+                    .ok_or("Missing value for --digital-twin-params-path")?
+                    .to_string();
+            }
             "--rf-chain-cycles" => {
                 idx += 1;
                 cfg.rf_chain_cycles = args
@@ -551,7 +562,7 @@ fn parse_args() -> Result<AppConfig, String> {
 }
 
 fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
-    if cfg.dry_run || cfg.simulate {
+    if cfg.dry_run || cfg.simulate || matches!(cfg.mode, OperatingMode::DigitalTwin) {
         return Ok(());
     }
 
@@ -1430,15 +1441,34 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
         }
 
         // Vary parameters over time for demonstration
-        let power_pre_lna = -40.0 + (cycle as f32 % 20.0);
-        let bandwidth_hz = match (cycle / 20) % 3 {
+        let mut power_pre_lna = -40.0 + (cycle as f32 % 20.0);
+        let mut bandwidth_hz = match (cycle / 20) % 3 {
             0 => 1e6,
             1 => 10e6,
             _ => 20e6,
         };
-        let lna_voltage = if (cycle / 60) % 2 == 0 { 3.0 } else { 5.0 };
-        let lo_power = -10.0 + ((cycle as f32 % 30.0) - 15.0);
-        let pa_gain = 5.0 + ((cycle as f32 % 21.0) - 10.5);
+        let mut lna_voltage = if (cycle / 60) % 2 == 0 { 3.0 } else { 5.0 };
+        let mut lo_power = -10.0 + ((cycle as f32 % 30.0) - 15.0);
+        let mut pa_gain = 5.0 + ((cycle as f32 % 21.0) - 10.5);
+
+        // Check for external parameter overrides
+        if let Ok(params_content) = fs::read_to_string(&cfg.digital_twin_params_path) {
+            for line in params_content.lines() {
+                let parts: Vec<&str> = line.split('=').collect();
+                if parts.len() == 2 {
+                    let key = parts[0].trim();
+                    let val = parts[1].trim();
+                    match key {
+                        "power_pre_lna_dbm" => if let Ok(v) = val.parse::<f32>() { power_pre_lna = v; },
+                        "bandwidth_hz" => if let Ok(v) = val.parse::<f32>() { bandwidth_hz = v; },
+                        "lna_voltage" => if let Ok(v) = val.parse::<f32>() { lna_voltage = v; },
+                        "lo_power_dbm" => if let Ok(v) = val.parse::<f32>() { lo_power = v; },
+                        "pa_gain_db" => if let Ok(v) = val.parse::<f32>() { pa_gain = v; },
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         seq_id += 1;  // Increment seq_id at the START of the loop iteration, BEFORE processing
 

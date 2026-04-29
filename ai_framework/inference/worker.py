@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -79,13 +80,20 @@ class InferenceSocketWorker:
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             server.bind(self.socket_path)
-            server.listen(1)
+            server.listen(5)
             print(f"[worker] listening on {self.socket_path}")
 
             while self._running:
-                conn, _ = server.accept()
-                with conn:
-                    self._handle_client(conn)
+                try:
+                    server.settimeout(1.0)
+                    conn, _ = server.accept()
+                    thread = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
+                    thread.start()
+                except socket.timeout:
+                    continue
+                except Exception as exc:
+                    if self._running:
+                        print(f"[worker] Error accepting connection: {exc}")
         finally:
             if self.shm_ring is not None:
                 self.shm_ring.close()
@@ -142,44 +150,63 @@ class InferenceSocketWorker:
         return self._run_infer_request(runtime_req)
 
     def _handle_client(self, conn: socket.socket):
-        while self._running:
-            try:
-                msg_type, payload = recv_message(conn)
-            except ConnectionError:
-                return
-            except Exception as exc:
-                send_message(conn, MSG_ERROR_RESP, pack_error(f"protocol_error: {exc}"))
-                return
-
-            if msg_type == MSG_PING_REQ:
+        with conn:
+            while self._running:
                 try:
-                    seq_id = unpack_ping(payload)
-                    send_message(conn, MSG_PING_RESP, payload)
+                    msg_type, payload = recv_message(conn)
+                except ConnectionError:
+                    return
                 except Exception as exc:
-                    send_message(conn, MSG_ERROR_RESP, pack_error(f"bad_ping: {exc}"))
-                continue
+                    try:
+                        send_message(conn, MSG_ERROR_RESP, pack_error(f"protocol_error: {exc}"))
+                    except:
+                        pass
+                    return
 
-            if msg_type == MSG_SHUTDOWN_REQ:
-                self._running = False
-                send_message(conn, MSG_SHUTDOWN_RESP, b"")
-                return
+                if msg_type == MSG_PING_REQ:
+                    try:
+                        seq_id = unpack_ping(payload)
+                        send_message(conn, MSG_PING_RESP, payload)
+                    except Exception as exc:
+                        try:
+                            send_message(conn, MSG_ERROR_RESP, pack_error(f"bad_ping: {exc}"))
+                        except:
+                            pass
+                    continue
 
-            if msg_type not in (MSG_INFER_REQ, MSG_INFER_SHM_REQ):
-                send_message(conn, MSG_ERROR_RESP, pack_error(f"unknown_msg_type: {msg_type}"))
-                continue
+                if msg_type == MSG_SHUTDOWN_REQ:
+                    self._running = False
+                    try:
+                        send_message(conn, MSG_SHUTDOWN_RESP, b"")
+                    except:
+                        pass
+                    return
 
-            try:
-                if msg_type == MSG_INFER_REQ:
-                    req = unpack_infer_request(payload)
-                    resp_payload = self._run_infer_request(req)
-                else:
-                    req = unpack_infer_shm_request(payload)
-                    resp_payload = self._run_infer_shm_request(req)
-                send_message(conn, MSG_INFER_RESP, resp_payload)
-            except ValueError as exc:
-                send_message(conn, MSG_ERROR_RESP, pack_error(f"bad_request: {exc}"))
-            except Exception as exc:
-                send_message(conn, MSG_ERROR_RESP, pack_error(f"internal_error: {exc}"))
+                if msg_type not in (MSG_INFER_REQ, MSG_INFER_SHM_REQ):
+                    try:
+                        send_message(conn, MSG_ERROR_RESP, pack_error(f"unknown_msg_type: {msg_type}"))
+                    except:
+                        pass
+                    continue
+
+                try:
+                    if msg_type == MSG_INFER_REQ:
+                        req = unpack_infer_request(payload)
+                        resp_payload = self._run_infer_request(req)
+                    else:
+                        req = unpack_infer_shm_request(payload)
+                        resp_payload = self._run_infer_shm_request(req)
+                    send_message(conn, MSG_INFER_RESP, resp_payload)
+                except ValueError as exc:
+                    try:
+                        send_message(conn, MSG_ERROR_RESP, pack_error(f"bad_request: {exc}"))
+                    except:
+                        pass
+                except Exception as exc:
+                    try:
+                        send_message(conn, MSG_ERROR_RESP, pack_error(f"internal_error: {exc}"))
+                    except:
+                        pass
 
 
 def main():
