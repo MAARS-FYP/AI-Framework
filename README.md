@@ -219,6 +219,18 @@ python -m ai_framework.cli.inference_socket_client \
 
 For Rust integration, keep the ring buffer alive and reuse slots in a producer/consumer loop.
 
+## Reduced-Hardware FFT Path
+
+A separate isolated subsystem now lives under `ai_framework/reduced_hardware/`. It reads raw ILA-style ADC CSV captures, computes FFT features, and predicts only center frequency and bandwidth. The new worker is intentionally decoupled from the existing STFT/symbolic MAARS pipeline.
+
+Main entry points:
+
+- Training: `python -m ai_framework.reduced_hardware.train`
+- Worker: `python -m ai_framework.reduced_hardware.worker`
+- Synthetic data generator: `python -m ai_framework.reduced_hardware.train --generate-synthetic`
+
+The reduced-hardware mode uses the 25 MHz LO offset in the same way as the existing Valon path, but it only emits the reduced outputs it needs.
+
 ### One-Command Deployment Launcher
 
 Use the root launcher script to start the full system in correct order (Python worker first, then Rust app) with matching IPC/SHM settings:
@@ -249,17 +261,22 @@ CLI arguments always override values from `.env`.
 
 What the launcher does:
 
-- Starts Python worker with configured socket/checkpoint/scalers and SHM parameters.
+- Starts the appropriate Python worker first.
 - Waits for Unix socket readiness.
-- Starts Rust with matching `--ipc-mode`, socket path, sample-rate, and SHM args.
+- Starts Rust with matching IPC, socket, and mode settings.
 - Handles graceful shutdown and socket cleanup on exit/signals.
+
+In reduced-hardware mode, the launcher starts `ai_framework.reduced_hardware.worker` instead of the existing MAARS worker, and the Rust side skips the UART power-sensor and UDP ingress paths.
 
 Useful options:
 
-- `--mode hardware|simulate`
+- `--mode hardware|simulate|reduced-hardware`
+- `--reduced-simulate` (reduced-hardware mode with synthetic ADC samples only)
 - `--env-file ./deploy.env`
 - `--ipc-mode direct|shm`
 - `--socket-path /tmp/maars_infer.sock`
+- `--reduced-socket-path /tmp/maars_reduced_hw.sock`
+- `--reduced-capture-path ./ila_capture.csv`
 - `--sample-rate-hz 25000000`
 - `--shm-name maars_iq_ring --shm-slots 8 --shm-slot-capacity 8192`
 - `--worker-no-unlink-on-exit` (if you do not want worker SHM cleanup)
@@ -290,6 +307,15 @@ ai_framework/
 │   ├── protocol.py        # Binary IPC protocol for persistent worker
 │   ├── shm_ring.py        # Shared-memory ring buffer helper
 │   └── worker.py          # Persistent Unix-socket inference worker
+├── reduced_hardware/
+│   ├── config.py          # FFT-only configuration
+│   ├── dataset.py         # Raw ILA CSV manifest loader
+│   ├── features.py        # FFT feature extraction helpers
+│   ├── model.py          # 1D CNN multitask model
+│   ├── synthetic.py      # Synthetic capture/manifest generator
+│   ├── train.py          # Reduced-hardware training entry point
+│   ├── protocol.py       # JSON-line request/response helpers
+│   └── worker.py         # Reduced-hardware socket worker
 ├── cli/
 │   ├── inference_cli.py   # JSON-capable inference CLI for external programs
 │   └── inference_socket_client.py # Socket client (debug/integration testing)

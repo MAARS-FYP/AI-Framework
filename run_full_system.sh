@@ -5,9 +5,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
 
 MODE="hardware"
+REDUCED_SIMULATE="0"
 IPC_MODE="shm"
 SOCKET_PATH="/tmp/maars_infer.sock"
 SAMPLE_RATE_HZ="25000000"
+REDUCED_SOCKET_PATH="/tmp/maars_reduced_hw.sock"
+REDUCED_CAPTURE_PATH="${ROOT_DIR}/ila_capture.csv"
+REDUCED_CHECKPOINT_PATH="${ROOT_DIR}/checkpoints/reduced_hardware/reduced_hardware_fftnet.pt"
 
 SHM_NAME="maars_iq_ring"
 SHM_SLOTS="8"
@@ -56,10 +60,14 @@ Usage:
 
 Options:
   --env-file <path>                  Load deployment variables from env file (default: ./.env if present)
-  --mode <hardware|simulate>         Run full hardware loop or simulation mode
+  --mode <hardware|simulate|reduced-hardware>
+                                     Run full hardware loop, simulation mode, or reduced-hardware mode
+  --reduced-simulate                Run reduced-hardware mode with synthetic ADC samples only
   --ipc-mode <direct|shm>            IPC mode for Rust + Python worker
   --socket-path <path>               Unix socket path (default: /tmp/maars_infer.sock)
   --sample-rate-hz <float>           Sample rate used by worker and Rust
+  --reduced-socket-path <path>       Reduced-hardware worker socket path (default: /tmp/maars_reduced_hw.sock)
+  --reduced-capture-path <path>      ADC capture CSV path used by reduced-hardware mode (default: ./ila_capture.csv)
 
   --shm-name <name>                  SHM segment name (default: maars_iq_ring)
   --shm-slots <int>                  SHM slot count (default: 8)
@@ -133,9 +141,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --mode) MODE="$2"; shift 2 ;;
+    --reduced-simulate) REDUCED_SIMULATE="1"; shift ;;
     --ipc-mode) IPC_MODE="$2"; shift 2 ;;
     --socket-path) SOCKET_PATH="$2"; shift 2 ;;
     --sample-rate-hz) SAMPLE_RATE_HZ="$2"; shift 2 ;;
+    --reduced-socket-path) REDUCED_SOCKET_PATH="$2"; shift 2 ;;
+    --reduced-capture-path) REDUCED_CAPTURE_PATH="$2"; shift 2 ;;
     --shm-name) SHM_NAME="$2"; shift 2 ;;
     --shm-slots) SHM_SLOTS="$2"; shift 2 ;;
     --shm-slot-capacity) SHM_SLOT_CAPACITY="$2"; shift 2 ;;
@@ -178,7 +189,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${MODE}" != "hardware" && "${MODE}" != "simulate" ]]; then
+if [[ "${MODE}" != "hardware" && "${MODE}" != "simulate" && "${MODE}" != "reduced-hardware" ]]; then
   echo "Invalid --mode: ${MODE}" >&2
   exit 2
 fi
@@ -193,7 +204,7 @@ is_valon_enabled() {
     1) return 0 ;;
     0) return 1 ;;
     *)
-      if [[ "${MODE}" == "hardware" ]]; then
+      if [[ "${MODE}" == "hardware" || "${MODE}" == "reduced-hardware" ]]; then
         return 0
       fi
       return 1
@@ -210,14 +221,21 @@ cleanup() {
   fi
   rm -f "${VALON_SOCKET_PATH}" >/dev/null 2>&1 || true
 
+  local worker_socket_path="${SOCKET_PATH}"
+  if [[ "${MODE}" == "reduced-hardware" ]]; then
+    worker_socket_path="${REDUCED_SOCKET_PATH}"
+  fi
+
   if [[ -n "${WORKER_PID}" ]] && kill -0 "${WORKER_PID}" 2>/dev/null; then
-    "${PYTHON_BIN}" -m ai_framework.cli.inference_socket_client --socket-path "${SOCKET_PATH}" --shutdown >/dev/null 2>&1 || true
+    if [[ "${MODE}" != "reduced-hardware" ]]; then
+      "${PYTHON_BIN}" -m ai_framework.cli.inference_socket_client --socket-path "${worker_socket_path}" --shutdown >/dev/null 2>&1 || true
+    fi
     sleep 0.3
     kill "${WORKER_PID}" >/dev/null 2>&1 || true
     sleep 0.2
     kill -9 "${WORKER_PID}" >/dev/null 2>&1 || true
   fi
-  rm -f "${SOCKET_PATH}" >/dev/null 2>&1 || true
+  rm -f "${worker_socket_path}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -303,58 +321,108 @@ start_worker() {
   echo "[launcher] worker pid=${WORKER_PID}"
 }
 
-wait_for_socket() {
-  local waited=0
-  while [[ ! -S "${SOCKET_PATH}" ]]; do
-    sleep 0.2
-    waited=$((waited + 1))
-    if (( waited >= SOCKET_WAIT_TIMEOUT_SEC * 5 )); then
-      echo "[launcher] socket not ready at ${SOCKET_PATH} after ${SOCKET_WAIT_TIMEOUT_SEC}s" >&2
-      return 1
-    fi
-  done
-  echo "[launcher] socket ready: ${SOCKET_PATH}"
-}
-
-run_rust() {
-  local rust_args=(
-    --ipc-mode "${IPC_MODE}"
-    --socket-path "${SOCKET_PATH}"
+start_reduced_worker() {
+  local worker_args=(
+    -m ai_framework.reduced_hardware.worker
+    --socket-path "${REDUCED_SOCKET_PATH}"
+    --checkpoint "${REDUCED_CHECKPOINT_PATH}"
+    --device "${WORKER_DEVICE}"
     --sample-rate-hz "${SAMPLE_RATE_HZ}"
   )
 
-  if is_valon_enabled; then
-    rust_args+=(
-      --enable-valon
-      --valon-socket-path "${VALON_SOCKET_PATH}"
-    )
-  else
-    rust_args+=(--disable-valon)
-  fi
+  rm -f "${REDUCED_SOCKET_PATH}" >/dev/null 2>&1 || true
 
-  if [[ "${IPC_MODE}" == "shm" ]]; then
-    rust_args+=(
-      --shm-name "${SHM_NAME}"
-      --shm-slots "${SHM_SLOTS}"
-      --shm-slot-capacity "${SHM_SLOT_CAPACITY}"
-    )
-  fi
+  echo "[launcher] starting reduced-hardware Python worker..."
+  (
+    cd "${ROOT_DIR}"
+    "${PYTHON_BIN}" "${worker_args[@]}"
+  ) &
+  WORKER_PID=$!
+  echo "[launcher] reduced worker pid=${WORKER_PID}"
+}
 
-  if [[ "${MODE}" == "simulate" ]]; then
+wait_for_socket() {
+  local socket_path="$1"
+  local waited=0
+  while [[ ! -S "${socket_path}" ]]; do
+    sleep 0.2
+    waited=$((waited + 1))
+    if (( waited >= SOCKET_WAIT_TIMEOUT_SEC * 5 )); then
+      echo "[launcher] socket not ready at ${socket_path} after ${SOCKET_WAIT_TIMEOUT_SEC}s" >&2
+      return 1
+    fi
+  done
+  echo "[launcher] socket ready: ${socket_path}"
+}
+
+run_rust() {
+  local rust_args=()
+
+  if [[ "${MODE}" == "reduced-hardware" ]]; then
     rust_args+=(
-      --simulate
-      --simulate-cycles "${SIMULATE_CYCLES}"
-      --simulate-interval-ms "${SIMULATE_INTERVAL_MS}"
-      --dry-run-samples "${SIMULATE_SAMPLES}"
-      --dry-run-power-lna "${SIMULATE_POWER_LNA}"
-      --dry-run-power-pa "${SIMULATE_POWER_PA}"
-    )
-  else
-    rust_args+=(
+      --reduced-hardware
+      --reduced-socket-path "${REDUCED_SOCKET_PATH}"
+      --reduced-capture-path "${REDUCED_CAPTURE_PATH}"
+      --sample-rate-hz "${SAMPLE_RATE_HZ}"
       --uart-port "${UART_PORT}"
       --uart-baud "${UART_BAUD}"
-      --udp-bind "${UDP_BIND}"
     )
+    if is_valon_enabled; then
+      rust_args+=(
+        --enable-valon
+        --valon-socket-path "${VALON_SOCKET_PATH}"
+      )
+    else
+      rust_args+=(--disable-valon)
+    fi
+    if [[ "${REDUCED_SIMULATE}" == "1" ]]; then
+      rust_args+=(
+        --simulate
+        --simulate-cycles "${SIMULATE_CYCLES}"
+        --simulate-interval-ms "${SIMULATE_INTERVAL_MS}"
+        --dry-run-samples "${SIMULATE_SAMPLES}"
+      )
+    fi
+  else
+    rust_args+=(
+      --ipc-mode "${IPC_MODE}"
+      --socket-path "${SOCKET_PATH}"
+      --sample-rate-hz "${SAMPLE_RATE_HZ}"
+    )
+
+    if is_valon_enabled; then
+      rust_args+=(
+        --enable-valon
+        --valon-socket-path "${VALON_SOCKET_PATH}"
+      )
+    else
+      rust_args+=(--disable-valon)
+    fi
+
+    if [[ "${IPC_MODE}" == "shm" ]]; then
+      rust_args+=(
+        --shm-name "${SHM_NAME}"
+        --shm-slots "${SHM_SLOTS}"
+        --shm-slot-capacity "${SHM_SLOT_CAPACITY}"
+      )
+    fi
+
+    if [[ "${MODE}" == "simulate" ]]; then
+      rust_args+=(
+        --simulate
+        --simulate-cycles "${SIMULATE_CYCLES}"
+        --simulate-interval-ms "${SIMULATE_INTERVAL_MS}"
+        --dry-run-samples "${SIMULATE_SAMPLES}"
+        --dry-run-power-lna "${SIMULATE_POWER_LNA}"
+        --dry-run-power-pa "${SIMULATE_POWER_PA}"
+      )
+    else
+      rust_args+=(
+        --uart-port "${UART_PORT}"
+        --uart-baud "${UART_BAUD}"
+        --udp-bind "${UDP_BIND}"
+      )
+    fi
   fi
 
   if [[ "${RUST_CLEANUP_SHM_ON_EXIT}" == "1" ]]; then
@@ -372,8 +440,13 @@ run_rust() {
   )
 }
 
-start_worker
-wait_for_socket
+if [[ "${MODE}" == "reduced-hardware" ]]; then
+  start_reduced_worker
+  wait_for_socket "${REDUCED_SOCKET_PATH}"
+else
+  start_worker
+  wait_for_socket "${SOCKET_PATH}"
+fi
 start_valon_worker
 if ! wait_for_valon_socket; then
   echo "[launcher] valon startup failed" >&2

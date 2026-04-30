@@ -100,6 +100,8 @@ Notes:
 
 Source: `ai_framework/train.py`
 
+For the isolated FFT path, see `ai_framework/reduced_hardware/train.py`.
+
 Usage:
 
 ```bash
@@ -241,6 +243,29 @@ Notes:
 - If `--command` is not supplied, the script starts an interactive prompt.
 - One-shot mode currently supports `freq`, `rflevel`, `get`, and `status`.
 
+## Reduced-Hardware Python Worker
+
+Source: `ai_framework/reduced_hardware/worker.py`
+
+Usage:
+
+```bash
+python -m ai_framework.reduced_hardware.worker [options]
+```
+
+Flags:
+
+- `--socket-path <path>`: Unix socket path used by the reduced-hardware worker. Default: `/tmp/maars_reduced_hw.sock`.
+- `--checkpoint <path>`: Checkpoint for the reduced-hardware FFT model. Default: `checkpoints/reduced_hardware/reduced_hardware_fftnet.pt`.
+- `--device <auto|cpu|mps|cuda>`: Torch device selection. Default: `auto`.
+- `--sample-rate-hz <float>`: Sample rate used for FFT feature construction. Default: `125000000`.
+- `--n-fft <int>`: FFT length used by the reduced-hardware worker. Default: `16384`.
+
+Notes:
+
+- Requests use newline-delimited JSON messages over the Unix socket.
+- Each infer request may provide either `capture_csv_path` or inline `adc_samples`.
+
 ## Full System Launcher
 
 Source: `run_full_system.sh`
@@ -254,21 +279,24 @@ Usage:
 Launcher flags:
 
 - `--env-file <path>`: Load deployment variables from an environment file before the rest of the script runs. Default: `./.env` if present.
-- `--mode <hardware|simulate>`: Start the full hardware loop or the simulation loop.
-- `--ipc-mode <direct|shm>`: IPC mode passed to both Rust and the Python worker.
-- `--socket-path <path>`: Unix socket path for the inference worker. Default: `/tmp/maars_infer.sock`.
+- `--mode <hardware|simulate|reduced-hardware>`: Start the full hardware loop, the simulation loop, or the reduced-hardware loop.
+- `--reduced-simulate`: Run reduced-hardware mode with synthetic ADC samples only.
+- `--ipc-mode <direct|shm>`: IPC mode passed to both Rust and the Python worker in the standard MAARS path.
+- `--socket-path <path>`: Unix socket path for the standard inference worker. Default: `/tmp/maars_infer.sock`.
+- `--reduced-socket-path <path>`: Unix socket path for the reduced-hardware worker. Default: `/tmp/maars_reduced_hw.sock`.
+- `--reduced-capture-path <path>`: ADC capture CSV path used by reduced-hardware mode. Default: `./ila_capture.csv`.
 - `--sample-rate-hz <float>`: Sample rate used by both the worker and Rust.
 - `--shm-name <name>`: Shared-memory ring buffer name. Default: `maars_iq_ring`.
 - `--shm-slots <int>`: Shared-memory slot count. Default: `8`.
 - `--shm-slot-capacity <int>`: Shared-memory slot capacity. Default: `8192`.
 - `--no-worker-shm-create`: Do not pass `--shm-create` to the Python worker.
 - `--worker-no-unlink-on-exit`: Do not pass `--shm-unlink-on-exit` to the Python worker.
-- `--checkpoint <path>`: Python worker checkpoint path.
+- `--checkpoint <path>`: Python worker checkpoint path for the standard MAARS model.
 - `--scalers <path>`: Python worker scalers path.
 - `--worker-device <auto|cpu|mps|cuda>`: Python worker device selection.
-- `--uart-port <path>`: UART port passed to Rust in hardware mode.
-- `--uart-baud <int>`: UART baud passed to Rust in hardware mode.
-- `--udp-bind <host:port>`: UDP bind address passed to Rust in hardware mode.
+- `--uart-port <path>`: UART port passed to Rust.
+- `--uart-baud <int>`: UART baud passed to Rust.
+- `--udp-bind <host:port>`: UDP bind address passed to Rust in the standard hardware mode.
 - `--simulate-cycles <int>`: Number of simulation cycles. `0` means continuous.
 - `--simulate-interval-ms <int>`: Delay between simulation cycles.
 - `--simulate-samples <int>`: Synthetic IQ samples per cycle in simulation mode.
@@ -291,6 +319,7 @@ Forwarding behavior:
 - Everything after `--` is forwarded to Rust unchanged as extra Rust arguments.
 - In hardware mode, the launcher passes UART and UDP connection settings to Rust.
 - In simulation mode, the launcher passes simulation-only values to Rust instead of hardware I/O settings.
+- In reduced-hardware mode, the launcher starts the reduced FFT worker, points Rust at the reduced socket and capture path, and can optionally add `--simulate` for hardware-less synthetic runs.
 - The launcher starts the Python inference worker first, then the Valon worker when enabled, and then the Rust runtime.
 
 Examples:

@@ -3,6 +3,7 @@ mod protocol;
 mod receive_data;
 mod send_data;
 mod shm_ring;
+mod reduced_hardware_client;
 mod uart;
 mod uart_commands;
 mod valon_client;
@@ -11,6 +12,7 @@ use inference_client::InferenceSocketClient;
 use protocol::{InferenceRequest, InferenceResponse, InferenceShmRequest};
 use receive_data::{CircularBuffer, PowerMeasurement};
 use shm_ring::{SharedMemoryRingBuffer, SharedMemoryRingSpec};
+use reduced_hardware_client::ReducedHardwareInferenceClient;
 use std::f32::consts::PI;
 use std::io;
 use std::sync::mpsc;
@@ -46,6 +48,9 @@ enum IpcMode {
 struct AppConfig {
     ipc_mode: IpcMode,
     socket_path: String,
+    reduced_hardware: bool,
+    reduced_socket_path: String,
+    reduced_capture_path: String,
     sample_rate_hz: f64,
     shm_name: String,
     shm_slots: usize,
@@ -84,6 +89,9 @@ impl Default for AppConfig {
         Self {
             ipc_mode,
             socket_path: "/tmp/maars_infer.sock".to_string(),
+            reduced_hardware: false,
+            reduced_socket_path: "/tmp/maars_reduced_hw.sock".to_string(),
+            reduced_capture_path: "ila_capture.csv".to_string(),
             sample_rate_hz: 25_000_000.0,
             shm_name: std::env::var("MAARS_SHM_NAME")
                 .unwrap_or_else(|_| "maars_iq_ring".to_string()),
@@ -130,6 +138,9 @@ Usage:\n\
 Options:\n\
   --ipc-mode <direct|shm>            IPC mode (default: direct)\n\
   --socket-path <path>               Unix socket path (default: /tmp/maars_infer.sock)\n\
+    --reduced-hardware                 Run the isolated FFT center/bandwidth path\n\
+    --reduced-socket-path <path>       Unix socket path for reduced-hardware worker\n\
+    --reduced-capture-path <path>      ADC capture CSV path used in reduced-hardware mode\n\
   --sample-rate-hz <float>           Sample rate sent to inference worker\n\
   --shm-name <name>                  SHM segment name (default: maars_iq_ring)\n\
   --shm-slots <int>                  SHM slot count (default: 8)\n\
@@ -195,6 +206,23 @@ fn parse_args() -> Result<AppConfig, String> {
                 cfg.socket_path = args
                     .get(idx)
                     .ok_or("Missing value for --socket-path")?
+                    .to_string();
+            }
+            "--reduced-hardware" => {
+                cfg.reduced_hardware = true;
+            }
+            "--reduced-socket-path" => {
+                idx += 1;
+                cfg.reduced_socket_path = args
+                    .get(idx)
+                    .ok_or("Missing value for --reduced-socket-path")?
+                    .to_string();
+            }
+            "--reduced-capture-path" => {
+                idx += 1;
+                cfg.reduced_capture_path = args
+                    .get(idx)
+                    .ok_or("Missing value for --reduced-capture-path")?
                     .to_string();
             }
             "--sample-rate-hz" => {
@@ -377,6 +405,10 @@ fn parse_args() -> Result<AppConfig, String> {
 }
 
 fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
+    if cfg.reduced_hardware {
+        return Ok(());
+    }
+
     if cfg.dry_run || cfg.simulate {
         return Ok(());
     }
@@ -427,6 +459,271 @@ fn validate_runtime_config(cfg: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Default)]
+struct ReducedHardwareCommandTracker {
+    last_filter_mhz: Option<u8>,
+}
+
+impl ReducedHardwareCommandTracker {
+    fn commands_for(&mut self, bandwidth_class: u8) -> io::Result<Vec<Vec<u8>>> {
+        let filter_mhz = match bandwidth_class {
+            0 => 1,
+            1 => 10,
+            2 => 20,
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Unsupported bandwidth_class value: {}", other),
+                ));
+            }
+        };
+
+        let mut commands = Vec::new();
+        if self.last_filter_mhz != Some(filter_mhz) {
+            commands.push(format!("filter {}\r\n", filter_mhz).into_bytes());
+            self.last_filter_mhz = Some(filter_mhz);
+        }
+        Ok(commands)
+    }
+}
+
+#[derive(Default)]
+struct ReducedHardwareValonTracker {
+    last_lo_freq_milli: Option<i32>,
+}
+
+impl ReducedHardwareValonTracker {
+    fn commands_for(&mut self, seq_id: u64, center_class: u8) -> io::Result<Vec<valon_client::ValonCommand>> {
+        let center_freq_mhz = reduced_center_frequency_mhz(center_class)?;
+        let lo_freq_mhz = center_freq_mhz - 25.0;
+        let lo_freq_milli = (lo_freq_mhz * 1000.0).round() as i32;
+
+        let mut commands = Vec::new();
+        if self.last_lo_freq_milli != Some(lo_freq_milli) {
+            commands.push(valon_client::ValonCommand::SetFreq {
+                seq_id,
+                value_mhz: lo_freq_mhz,
+            });
+            self.last_lo_freq_milli = Some(lo_freq_milli);
+        }
+        Ok(commands)
+    }
+}
+
+fn reduced_center_frequency_mhz(center_class: u8) -> io::Result<f32> {
+    match center_class {
+        0 => Ok(2405.0),
+        1 => Ok(2420.0),
+        2 => Ok(2435.0),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Unsupported center_class value: {}", other),
+        )),
+    }
+}
+
+fn generate_reduced_synthetic_adc_samples(
+    n_samples: usize,
+    center_class: u8,
+    bandwidth_class: u8,
+    phase_offset: f32,
+) -> Vec<f32> {
+    let mut out = Vec::with_capacity(n_samples);
+    let center_offset_hz = match center_class {
+        0 => 5_000_000.0,
+        1 => 12_000_000.0,
+        _ => 20_000_000.0,
+    };
+    let bandwidth_hz = match bandwidth_class {
+        0 => 1_000_000.0,
+        1 => 10_000_000.0,
+        _ => 20_000_000.0,
+    };
+    let tone_offsets: Vec<f32> = if bandwidth_class == 0 {
+        vec![0.0]
+    } else {
+        vec![-0.35, -0.12, 0.0, 0.12, 0.35]
+            .into_iter()
+            .map(|fraction| fraction * bandwidth_hz)
+            .collect()
+    };
+    for idx in 0..n_samples {
+        let t = idx as f32 / 125_000_000.0;
+        let mut sample = 0.0f32;
+        for offset in &tone_offsets {
+            let phase = phase_offset + (*offset / 1_000_000.0);
+            sample += ((2.0 * PI * (center_offset_hz + *offset) * t) + phase).sin();
+        }
+        sample /= tone_offsets.len().max(1) as f32;
+        let envelope = 0.65 + 0.35 * ((idx as f32 / n_samples.max(1) as f32) * PI).sin().abs();
+        let noise = (((idx as f32 * 0.017 + phase_offset).sin()) * 0.08)
+            + (((idx as f32 * 0.031 + phase_offset).cos()) * 0.04);
+        out.push((sample * envelope + noise) * 72.0);
+    }
+    out
+}
+
+fn run_reduced_hardware_loop(cfg: &AppConfig) -> io::Result<()> {
+    if cfg.simulate {
+        return run_reduced_hardware_simulation(cfg);
+    }
+
+    let mut inference_client = ReducedHardwareInferenceClient::new(&cfg.reduced_socket_path);
+    inference_client.connect()?;
+
+    let mut uart_command_tx: Option<mpsc::Sender<Vec<u8>>> = None;
+    let mut filter_tracker = ReducedHardwareCommandTracker::default();
+    let mut valon_command_tx: Option<mpsc::Sender<valon_client::ValonCommand>> = None;
+    let mut valon_tracker = ReducedHardwareValonTracker::default();
+
+    if cfg.enable_uart_path {
+        let uart_config = UartConfig::new(&cfg.uart_port, cfg.uart_baud);
+        let uart = uart::Uart::open(&uart_config)?;
+        let uart_writer = uart.try_clone()?;
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            if let Err(e) = send_data::send_uart_data(uart_writer, rx) {
+                eprintln!("Reduced-hardware UART sender error: {}", e);
+            }
+        });
+        uart_command_tx = Some(tx);
+    }
+
+    if cfg.enable_valon {
+        let (tx, rx) = mpsc::channel::<valon_client::ValonCommand>();
+        let valon_socket_path = cfg.valon_socket_path.clone();
+        let print_logs = cfg.print_inference_results;
+        thread::spawn(move || {
+            if let Err(e) = send_valon_commands(&valon_socket_path, rx, print_logs) {
+                eprintln!("Reduced-hardware Valon sender error: {}", e);
+            }
+        });
+        valon_command_tx = Some(tx);
+    }
+
+    println!(
+        "REDUCED HW mode active: uart_out={} valon_out={} capture_path={} socket_path={}",
+        if uart_command_tx.is_some() { "on" } else { "off" },
+        if valon_command_tx.is_some() { "on" } else { "off" },
+        cfg.reduced_capture_path,
+        cfg.reduced_socket_path,
+    );
+
+    let mut cycle: u64 = 0;
+    loop {
+        cycle += 1;
+        let resp = inference_client.infer_capture_path(cycle, &cfg.reduced_capture_path, cfg.sample_rate_hz)?;
+
+        if cfg.print_inference_results {
+            println!(
+                "REDUCED seq={} center={} ({:.1} MHz) bw={} ({:.1} MHz) center_conf={:.3} bw_conf={:.3}",
+                resp.seq_id,
+                resp.center_class,
+                resp.center_frequency_mhz,
+                resp.bandwidth_class,
+                resp.bandwidth_mhz,
+                resp.center_confidence,
+                resp.bandwidth_confidence,
+            );
+        }
+
+        if let Some(tx) = uart_command_tx.as_ref() {
+            let commands = filter_tracker.commands_for(resp.bandwidth_class)?;
+            for command in commands {
+                if let Err(e) = tx.send(command.clone()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("Failed to queue reduced-hardware UART command for seq {}: {}", resp.seq_id, e),
+                    ));
+                }
+                if cfg.print_inference_results {
+                    let text = String::from_utf8_lossy(&command);
+                    println!("REDUCED seq={} uart_cmd={}", resp.seq_id, text.trim_end_matches(['\r', '\n']));
+                }
+            }
+        }
+
+        if let Some(tx) = valon_command_tx.as_ref() {
+            let commands = valon_tracker.commands_for(resp.seq_id, resp.center_class)?;
+            for command in commands {
+                if let Err(e) = tx.send(command) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("Failed to queue reduced-hardware Valon command for seq {}: {}", resp.seq_id, e),
+                    ));
+                }
+            }
+        }
+
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn run_reduced_hardware_simulation(cfg: &AppConfig) -> io::Result<()> {
+    let mut inference_client = ReducedHardwareInferenceClient::new(&cfg.reduced_socket_path);
+    inference_client.connect()?;
+
+    let mut filter_tracker = ReducedHardwareCommandTracker::default();
+    let mut valon_tracker = ReducedHardwareValonTracker::default();
+
+    println!(
+        "REDUCED SIM mode active: samples={} interval_ms={}",
+        cfg.dry_run_samples,
+        cfg.simulate_interval_ms,
+    );
+
+    let mut cycle: u64 = 0;
+    loop {
+        cycle += 1;
+        if cfg.simulate_cycles > 0 && cycle > cfg.simulate_cycles {
+            break;
+        }
+
+        let center_class = ((cycle - 1) % 3) as u8;
+        let bandwidth_class = (((cycle - 1) / 3) % 3) as u8;
+        let adc_samples = generate_reduced_synthetic_adc_samples(
+            cfg.dry_run_samples,
+            center_class,
+            bandwidth_class,
+            cycle as f32 * 0.17,
+        );
+
+        let resp = inference_client.infer_samples(cycle, &adc_samples, cfg.sample_rate_hz)?;
+        println!(
+            "REDUCED SIM seq={} center={} ({:.1} MHz) bw={} ({:.1} MHz) center_conf={:.3} bw_conf={:.3}",
+            resp.seq_id,
+            resp.center_class,
+            resp.center_frequency_mhz,
+            resp.bandwidth_class,
+            resp.bandwidth_mhz,
+            resp.center_confidence,
+            resp.bandwidth_confidence,
+        );
+
+        let filter_cmds = filter_tracker.commands_for(resp.bandwidth_class)?;
+        for cmd in filter_cmds {
+            let text = String::from_utf8_lossy(&cmd);
+            println!("REDUCED SIM seq={} uart_cmd={}", resp.seq_id, text.trim_end_matches(['\r', '\n']));
+        }
+
+        let valon_cmds = valon_tracker.commands_for(resp.seq_id, resp.center_class)?;
+        for cmd in valon_cmds {
+            match cmd {
+                valon_client::ValonCommand::SetFreq { value_mhz, .. } => {
+                    println!("REDUCED SIM seq={} valon_cmd=set_freq {:.3}", resp.seq_id, value_mhz);
+                }
+                valon_client::ValonCommand::SetRfLevel { value_dbm, .. } => {
+                    println!("REDUCED SIM seq={} valon_cmd=set_rflevel {:.3}", resp.seq_id, value_dbm);
+                }
+            }
+        }
+
+        thread::sleep(std::time::Duration::from_millis(cfg.simulate_interval_ms));
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cfg = match parse_args() {
         Ok(v) => v,
@@ -441,6 +738,14 @@ fn main() {
         eprintln!("Configuration error: {}", e);
         print_help();
         std::process::exit(2);
+    }
+
+    if cfg.reduced_hardware {
+        if let Err(e) = run_reduced_hardware_loop(&cfg) {
+            eprintln!("Reduced-hardware runtime failed: {}", e);
+            std::process::exit(1);
+        }
+        return;
     }
 
     if cfg.dry_run {
