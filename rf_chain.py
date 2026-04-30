@@ -127,17 +127,32 @@ class RFChain:
         return out_real + noise
 
     def bandpass_filter(self, signal_in, fs, center_freq, bw):
+        nyquist = 0.5 * fs
+
+        def _bounded(low_hz, high_hz):
+            low_hz = max(0.001 * nyquist, float(low_hz))
+            high_hz = min(0.999 * nyquist, float(high_hz))
+            if low_hz >= high_hz:
+                span = max(1.0e5, 0.05 * nyquist)
+                low_hz = max(0.001 * nyquist, center_freq - span)
+                high_hz = min(0.999 * nyquist, center_freq + span)
+            return low_hz, high_hz
+
+        center_offset = center_freq - FC_IF
+
         if abs(bw - 1e6) < 1e-3:
-            wp = [24.2e6, 25.7e6]
+            wp = [24.2e6 + center_offset, 25.7e6 + center_offset]
+            wp = _bounded(wp[0], wp[1])
             sos = signal.cheby1(3, 0.1, wp, btype='bandpass', fs=fs, output='sos')
         elif abs(bw - 10e6) < 1e-3:
-            wp = [19e6, 30.5e6]
+            wp = [19e6 + center_offset, 30.5e6 + center_offset]
+            wp = _bounded(wp[0], wp[1])
             sos = signal.ellip(4, 0.1, 40, wp, btype='bandpass', fs=fs, output='sos')
         elif abs(bw - 20e6) < 1e-3:
-            wp = [14e6, 35.5e6]
+            wp = [14e6 + center_offset, 35.5e6 + center_offset]
+            wp = _bounded(wp[0], wp[1])
             sos = signal.ellip(4, 0.1, 40, wp, btype='bandpass', fs=fs, output='sos')
         else:
-            nyquist = 0.5 * fs
             low = max(0.001, (center_freq - bw/2) / nyquist)
             high = min(0.999, (center_freq + bw/2) / nyquist)
             sos = signal.butter(4, [low*nyquist, high*nyquist], btype='bandpass', fs=fs, output='sos')
@@ -162,6 +177,10 @@ class RFChain:
         fc_lo = setting.lo_freq_hz
         if fc_lo <= 0.0:
             fc_lo = fc_rf - FC_IF
+
+        expected_if_center_hz = abs(fc_rf - fc_lo)
+        if expected_if_center_hz <= 0.0:
+            expected_if_center_hz = FC_IF
         
         jitter = np.random.normal(0, 0.005, len(t_rf))
         p_lo_watts = 10**(setting.lo_power_dbm / 10.0) / 1000.0
@@ -173,7 +192,7 @@ class RFChain:
         mixer_out_filtered = signal.sosfilt(sos, mixer_out)
         decim_analog = int(FS_RF / FS_BB)
         rx_if_analog = mixer_out_filtered[::decim_analog]
-        rx_if_filtered = self.bandpass_filter(rx_if_analog, FS_BB, FC_IF, op_point.bandwidth)
+        rx_if_filtered = self.bandpass_filter(rx_if_analog, FS_BB, expected_if_center_hz, op_point.bandwidth)
         rx_if_analytic = signal.hilbert(rx_if_filtered)
         
         gain_linear = 10**(setting.pa_drive_db / 20.0)

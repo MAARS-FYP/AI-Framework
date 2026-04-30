@@ -1496,7 +1496,6 @@
           const loCenterMhz = pickMetric(payload, [
             "lo_center_mhz",
             "valon_frequency_mhz",
-            "center_freq_hz",
           ]);
 
           dom.seq.textContent = Number.isFinite(seqId)
@@ -1517,9 +1516,11 @@
             FILTER_CLASS_MAP,
             filterClass,
           );
-          dom.oscillatorFreq.textContent = Number.isFinite(loCenterMhz)
-            ? formatFixed(loCenterMhz, 1, " MHz")
-            : lookupLabel(CENTER_CLASS_MAP, centerClass);
+          dom.oscillatorFreq.textContent = Number.isFinite(centerClass)
+            ? lookupLabel(CENTER_CLASS_MAP, centerClass)
+            : Number.isFinite(loCenterMhz)
+              ? formatFixed(loCenterMhz, 1, " MHz")
+              : "--";
 
           dom.mixerDbm.textContent = formatFixed(mixerDbm, 1);
           dom.ifampDb.textContent = formatFixed(payload.ifamp_db, 1);

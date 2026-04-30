@@ -88,7 +88,9 @@ class RFChainDashboardBackend:
         if "bandwidth_hz" in cleaned:
             cleaned["bandwidth_hz"] = _clamp(float(cleaned["bandwidth_hz"]), 1e6, 60e6)
         if "center_freq_hz" in cleaned:
-            cleaned["center_freq_hz"] = _clamp(float(cleaned["center_freq_hz"]), 2395e6, 2480e6)
+            center_mhz = round(float(cleaned["center_freq_hz"]) / 1e6)
+            center_mhz = _clamp(center_mhz, 2400, 2440)
+            cleaned["center_freq_hz"] = center_mhz * 1e6
         if "lna_voltage" in cleaned:
             cleaned["lna_voltage"] = _clamp(float(cleaned["lna_voltage"]), 3.0, 5.0)
         if "lo_power_dbm" in cleaned:

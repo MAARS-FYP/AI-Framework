@@ -970,12 +970,10 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
             }
         }
 
-        // In autonomous mode (manual_mode == 0), fix the LO at 2395 MHz (for 2420 center target)
-        // so the AI can detect shifts as the RF signal sweeps.
-        // We also use a wide (60 MHz) filter so the AI can "see" the whole band.
-        // In manual mode, we follow user's desired tuning exactly, with power input clamped to [-60, +20] dBm.
-        let target_center_mhz = if manual_mode == 1 { center_freq_hz / 1e6 } else { 2420.0 };
-        let evaluation_lo_freq_hz = (target_center_mhz - 25.0) * 1e6;
+        // Keep LO fixed at 2395 MHz for inference evaluation so RF center movement
+        // appears as IF center offset and the FFT-based center classifier can respond.
+        // This avoids center-class locking at 2420 MHz when LO tracks RF center.
+        let evaluation_lo_freq_hz = 2395.0e6;
         let evaluation_lo_power_dbm = if manual_mode == 1 { lo_power } else { 0.0 };
         let evaluation_bandwidth_hz = if manual_mode == 1 { bandwidth_hz } else { 60.0e6 };
 
@@ -1046,18 +1044,24 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                             inference_ok = true;
                             status_code = result.status_code;
                             lna_class = result.lna_class;
+                            filter_class = result.filter_class;
+                            center_class = result.center_class;
                             mixer_dbm = result.mixer_dbm;
                             ifamp_db = result.ifamp_db;
                             agent_evm_value = result.evm_value;
                             lna_voltage_v = match result.lna_class { 0 => 3.0, 1 => 5.0, _ => 3.0 };
-
-                            // Keep dashboard telemetry aligned with commanded RF settings in digital twin.
-                            // The AI center classifier operates on IF-centered spectra and can remain at class=1
-                            // when LO tracks RF center (manual mode), so use commanded RF center/bandwidth here.
-                            filter_class = default_filter_class;
-                            center_class = default_center_class;
-                            selected_filter_mhz = bandwidth_hz / 1e6;
-                            lo_center_mhz = center_freq_hz / 1e6;
+                            selected_filter_mhz = match result.filter_class {
+                                0 => 1.0,
+                                1 => 10.0,
+                                2 => 20.0,
+                                _ => bandwidth_hz / 1e6,
+                            };
+                            lo_center_mhz = match result.center_class {
+                                0 => 2405.0,
+                                1 => 2420.0,
+                                2 => 2435.0,
+                                _ => center_freq_hz / 1e6,
+                            };
                         }
                         Err(e) => {
                             eprintln!("[digital_twin] Inference error: {}", e);
