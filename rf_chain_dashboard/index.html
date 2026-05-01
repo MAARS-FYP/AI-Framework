@@ -1,494 +1,533 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RF Chain Digital Twin Dashboard</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RF Chain Digital Twin</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
     <style>
-        :root {
-            --bg-0: #0f1419;
-            --bg-1: #131819;
-            --surface-0: rgba(25, 30, 38, 0.94);
-            --surface-1: #1a1f27;
-            --surface-2: #232b35;
-            --border: #2d3748;
-            --border-strong: #3a4556;
-            --text-0: #e5e7eb;
-            --text-1: #a1a5b5;
-            --accent: #60a5fa;
-            --accent-strong: #3b82f6;
-            --accent-soft: rgba(96, 165, 250, 0.14);
-            --success: #34d399;
-            --warning: #fbbf24;
-            --error: #f87171;
-            --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.4);
-            --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
-        }
+      :root {
+        --bg-0: #0f1419;
+        --bg-1: #131819;
+        --surface-0: rgba(25, 30, 38, 0.94);
+        --surface-1: #1a1f27;
+        --surface-2: #232b35;
+        --border: #2d3748;
+        --border-strong: #3a4556;
+        --text-0: #e5e7eb;
+        --text-1: #a1a5b5;
+        --accent: #60a5fa;
+        --accent-strong: #3b82f6;
+        --accent-soft: rgba(96, 165, 250, 0.14);
+        --success: #34d399;
+        --warning: #fbbf24;
+        --error: #f87171;
+        --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
+      }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-        html,
-        body {
-            min-height: 100%;
-        }
+      html,
+      body {
+        min-height: 100%;
+      }
 
-        body {
-            font-family: Inter, "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-            background:
-                radial-gradient(1200px 700px at 10% -10%, rgba(30, 58, 138, 0.15), transparent 60%),
-                radial-gradient(900px 600px at 95% 10%, rgba(15, 20, 25, 0.95), transparent 52%),
-                linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
-            color: var(--text-0);
-            min-height: 100vh;
-            padding: 22px;
-        }
+      body {
+        font-family: Inter, "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background:
+          radial-gradient(
+            1200px 700px at 10% -10%,
+            rgba(30, 58, 138, 0.15),
+            transparent 60%
+          ),
+          radial-gradient(
+            900px 600px at 95% 10%,
+            rgba(15, 20, 25, 0.95),
+            transparent 52%
+          ),
+          linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+        color: var(--text-0);
+        min-height: 100vh;
+        padding: 22px;
+      }
 
-        body::before {
-            content: "";
-            position: fixed;
-            inset: 0;
-            pointer-events: none;
-            opacity: 0.15;
-            background-image: repeating-linear-gradient(
-                0deg,
-                rgba(255, 255, 255, 0.025) 0,
-                rgba(255, 255, 255, 0.025) 1px,
-                transparent 1px,
-                transparent 46px
-            );
-        }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.15;
+        background-image: repeating-linear-gradient(
+          0deg,
+          rgba(255, 255, 255, 0.025) 0,
+          rgba(255, 255, 255, 0.025) 1px,
+          transparent 1px,
+          transparent 46px
+        );
+      }
 
-        .container {
-            max-width: 1500px;
-            margin: 0 auto;
-        }
+      .container {
+        max-width: 1500px;
+        margin: 0 auto;
+      }
 
-        .header,
-        .panel {
-            background: var(--surface-0);
-            backdrop-filter: blur(16px);
-            border: 1px solid var(--border);
-            box-shadow: var(--shadow-md);
-        }
+      .header,
+      .panel {
+        background: var(--surface-0);
+        backdrop-filter: blur(16px);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-md);
+      }
 
-        .header {
-            padding: 24px 26px;
-            border-radius: 18px;
-            margin-bottom: 18px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 18px;
-        }
+      .header {
+        padding: 24px 26px;
+        border-radius: 18px;
+        margin-bottom: 18px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+      }
 
-        .header h1 {
-            color: var(--text-0);
-            font-size: clamp(1.4rem, 1vw + 1.1rem, 2rem);
-            letter-spacing: -0.02em;
-            font-weight: 700;
-        }
+      .header h1 {
+        color: var(--text-0);
+        font-size: clamp(1.4rem, 1vw + 1.1rem, 2rem);
+        letter-spacing: -0.02em;
+        font-weight: 700;
+      }
 
-        .header p {
-            color: var(--text-1);
-            margin-top: 6px;
-            font-size: 0.96rem;
-        }
+      .header p {
+        color: var(--text-1);
+        margin-top: 6px;
+        font-size: 0.96rem;
+      }
 
-        .status {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 16px;
-            border-radius: 999px;
-            border: 1px solid var(--border);
-            background: var(--surface-1);
-            font-size: 0.84rem;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-            color: var(--text-1);
-            white-space: nowrap;
-        }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface-1);
+        font-size: 0.84rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--text-1);
+        white-space: nowrap;
+      }
 
-        .status.connected {
-            border-color: rgba(52, 211, 153, 0.35);
-            background: rgba(52, 211, 153, 0.10);
-            color: var(--success);
-        }
+      .status.connected {
+        border-color: rgba(52, 211, 153, 0.35);
+        background: rgba(52, 211, 153, 0.1);
+        color: var(--success);
+      }
 
-        .status.disconnected {
-            border-color: rgba(248, 113, 113, 0.35);
-            background: rgba(248, 113, 113, 0.10);
-            color: var(--error);
-        }
+      .status.disconnected {
+        border-color: rgba(248, 113, 113, 0.35);
+        background: rgba(248, 113, 113, 0.1);
+        color: var(--error);
+      }
 
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-            animation: pulse 2s infinite;
-        }
+      .status-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        animation: pulse 2s infinite;
+      }
 
-        .connected .status-indicator {
-            background: var(--success);
-        }
+      .connected .status-indicator {
+        background: var(--success);
+      }
 
-        .disconnected .status-indicator {
-            background: var(--error);
-        }
+      .disconnected .status-indicator {
+        background: var(--error);
+      }
 
+      .layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      @media (max-width: 1200px) {
         .layout {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 18px;
-            margin-bottom: 18px;
+          grid-template-columns: 1fr;
         }
+      }
 
-        @media (max-width: 1200px) {
-            .layout {
-                grid-template-columns: 1fr;
-            }
+      .panel {
+        padding: 22px 24px;
+        border-radius: 18px;
+      }
+
+      .panel h2 {
+        color: var(--text-0);
+        margin-bottom: 18px;
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .control-group {
+        margin-bottom: 18px;
+      }
+
+      .label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 8px;
+        color: var(--text-1);
+        font-size: 0.88rem;
+      }
+
+      .slider-container {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      input[type="range"] {
+        flex: 1;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #2d3748, #3a4556);
+        outline: none;
+        appearance: none;
+        -webkit-appearance: none;
+      }
+
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+        border: 1px solid #0ea5e9;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        cursor: pointer;
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease;
+      }
+
+      input[type="range"]::-webkit-slider-thumb:hover {
+        transform: scale(1.05);
+        border-color: var(--accent);
+      }
+
+      input[type="range"]::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+        border: 1px solid #0ea5e9;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        cursor: pointer;
+      }
+
+      .value-display {
+        flex: 0 0 84px;
+        text-align: right;
+        font-weight: 700;
+        color: #60a5fa;
+        font-size: 0.88rem;
+      }
+
+      .button-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .btn {
+        flex: 1;
+        padding: 11px 14px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface-1);
+        color: var(--text-1);
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          transform 0.18s ease,
+          box-shadow 0.18s ease,
+          border-color 0.18s ease,
+          background 0.18s ease;
+        font-size: 0.84rem;
+      }
+
+      .btn:hover:not(.active) {
+        transform: translateY(-1px);
+        border-color: #60a5fa;
+        box-shadow: 0 8px 18px rgba(96, 165, 250, 0.15);
+      }
+
+      .btn.active,
+      .btn-primary {
+        background: linear-gradient(180deg, #3b82f6, #1e40af);
+        color: #ffffff;
+        border-color: #0ea5e9;
+        box-shadow:
+          0 0 20px rgba(59, 130, 246, 0.4),
+          0 8px 18px rgba(0, 0, 0, 0.2);
+        font-weight: 700;
+      }
+
+      .btn.inactive {
+        background: var(--surface-2);
+        color: #8a93a1;
+      }
+
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+        margin-top: 14px;
+      }
+
+      .metric-card {
+        background: linear-gradient(180deg, #232b35, #1a1f27);
+        color: var(--text-0);
+        border: 1px solid var(--border);
+        padding: 16px;
+        border-radius: 14px;
+        text-align: center;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+      }
+
+      .metric-label {
+        font-size: 0.76rem;
+        color: var(--text-1);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .metric-value {
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: var(--text-0);
+      }
+
+      .metric-unit {
+        font-size: 0.72rem;
+        color: var(--text-1);
+        margin-left: 4px;
+      }
+
+      canvas {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        width: 100%;
+        background: #1a1f27;
+        margin-top: 10px;
+      }
+
+      .visualization-container {
+        margin-top: 20px;
+      }
+
+      .constellation {
+        width: 100%;
+        height: 300px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #1a1f27;
+        position: relative;
+      }
+
+      .spectrum {
+        width: 100%;
+        height: 250px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #1a1f27;
+        margin-top: 15px;
+      }
+
+      .loading {
+        display: inline-block;
+        opacity: 0.7;
+        font-size: 0.8rem;
+        color: var(--text-1);
+      }
+
+      .error-message,
+      .info-box,
+      .agent-output {
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-top: 15px;
+        font-size: 0.9rem;
+        border: 1px solid var(--border);
+        background: var(--surface-1);
+        color: var(--text-0);
+      }
+
+      .error-message {
+        border-color: rgba(248, 113, 113, 0.35);
+        background: rgba(248, 113, 113, 0.08);
+        color: #fca5a5;
+      }
+
+      .info-box {
+        border-color: rgba(96, 165, 250, 0.35);
+        background: rgba(96, 165, 250, 0.08);
+        color: #93c5fd;
+      }
+
+      .agent-output {
+        border-color: rgba(60, 130, 246, 0.28);
+        background: linear-gradient(180deg, #232b35, #1a1f27);
+      }
+
+      .agent-output h3 {
+        color: var(--text-0);
+        margin-bottom: 10px;
+        font-size: 0.94rem;
+        font-weight: 700;
+      }
+
+      .agent-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid #edf1f5;
+        color: var(--text-1);
+      }
+
+      .agent-row strong {
+        color: var(--text-0);
+      }
+
+      .agent-row:last-child {
+        border-bottom: none;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
         }
-
-        .panel {
-            padding: 22px 24px;
-            border-radius: 18px;
+        50% {
+          opacity: 0.5;
         }
+      }
 
-        .panel h2 {
-            color: var(--text-0);
-            margin-bottom: 18px;
-            font-size: 1.05rem;
-            font-weight: 700;
-            letter-spacing: 0.01em;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border);
-        }
+      .grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+      }
 
-        .control-group {
-            margin-bottom: 18px;
-        }
-
-        .label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-1);
-            font-size: 0.88rem;
-        }
-
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        input[type="range"] {
-            flex: 1;
-            height: 6px;
-            border-radius: 999px;
-            background: linear-gradient(90deg, #2d3748, #3a4556);
-            outline: none;
-            appearance: none;
-            -webkit-appearance: none;
-        }
-
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: linear-gradient(180deg, #3b82f6, #1d4ed8);
-            border: 1px solid #0ea5e9;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-            cursor: pointer;
-            transition: transform 0.2s ease, border-color 0.2s ease;
-        }
-
-        input[type="range"]::-webkit-slider-thumb:hover {
-            transform: scale(1.05);
-            border-color: var(--accent);
-        }
-
-        input[type="range"]::-moz-range-thumb {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: linear-gradient(180deg, #3b82f6, #1d4ed8);
-            border: 1px solid #0ea5e9;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-            cursor: pointer;
-        }
-
-        .value-display {
-            flex: 0 0 84px;
-            text-align: right;
-            font-weight: 700;
-            color: #60a5fa;
-            font-size: 0.88rem;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-
-        .btn {
-            flex: 1;
-            padding: 11px 14px;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            background: var(--surface-1);
-            color: var(--text-1);
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-            font-size: 0.84rem;
-        }
-
-        .btn:hover:not(.active) {
-            transform: translateY(-1px);
-            border-color: #60a5fa;
-            box-shadow: 0 8px 18px rgba(96, 165, 250, 0.15);
-        }
-
-        .btn.active,
-        .btn-primary {
-            background: linear-gradient(180deg, #3b82f6, #1e40af);
-            color: #ffffff;
-            border-color: #0ea5e9;
-            box-shadow: 0 0 20px rgba(59, 130, 246, 0.4), 0 8px 18px rgba(0, 0, 0, 0.2);
-            font-weight: 700;
-        }
-
-        .btn.inactive {
-            background: var(--surface-2);
-            color: #8a93a1;
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 14px;
-            margin-top: 14px;
-        }
-
-        .metric-card {
-            background: linear-gradient(180deg, #232b35, #1a1f27);
-            color: var(--text-0);
-            border: 1px solid var(--border);
-            padding: 16px;
-            border-radius: 14px;
-            text-align: center;
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
-        }
-
-        .metric-label {
-            font-size: 0.76rem;
-            color: var(--text-1);
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-
-        .metric-value {
-            font-size: 1.45rem;
-            font-weight: 700;
-            color: var(--text-0);
-        }
-
-        .metric-unit {
-            font-size: 0.72rem;
-            color: var(--text-1);
-            margin-left: 4px;
-        }
-
-        canvas {
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            width: 100%;
-            background: #1a1f27;
-            margin-top: 10px;
-        }
-
-        .visualization-container {
-            margin-top: 20px;
-        }
-
-        .constellation {
-            width: 100%;
-            height: 300px;
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            background: #1a1f27;
-            position: relative;
-        }
-
-        .spectrum {
-            width: 100%;
-            height: 250px;
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            background: #1a1f27;
-            margin-top: 15px;
-        }
-
-        .loading {
-            display: inline-block;
-            opacity: 0.7;
-            font-size: 0.8rem;
-            color: var(--text-1);
-        }
-
-        .error-message,
-        .info-box,
-        .agent-output {
-            border-radius: 14px;
-            padding: 14px 16px;
-            margin-top: 15px;
-            font-size: 0.9rem;
-            border: 1px solid var(--border);
-            background: var(--surface-1);
-            color: var(--text-0);
-        }
-
-        .error-message {
-            border-color: rgba(248, 113, 113, 0.35);
-            background: rgba(248, 113, 113, 0.08);
-            color: #fca5a5;
-        }
-
-        .info-box {
-            border-color: rgba(96, 165, 250, 0.35);
-            background: rgba(96, 165, 250, 0.08);
-            color: #93c5fd;
-        }
-
-        .agent-output {
-            border-color: rgba(60, 130, 246, 0.28);
-            background: linear-gradient(180deg, #232b35, #1a1f27);
-        }
-
-        .agent-output h3 {
-            color: var(--text-0);
-            margin-bottom: 10px;
-            font-size: 0.94rem;
-            font-weight: 700;
-        }
-
-        .agent-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            padding: 8px 0;
-            border-bottom: 1px solid #edf1f5;
-            color: var(--text-1);
-        }
-
-        .agent-row strong {
-            color: var(--text-0);
-        }
-
-        .agent-row:last-child {
-            border-bottom: none;
-        }
-
-        @keyframes pulse {
-            0%,
-            100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
+      @media (max-width: 1000px) {
         .grid-4 {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
+          grid-template-columns: repeat(2, 1fr);
         }
+      }
 
-        @media (max-width: 1000px) {
-            .grid-4 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        code {
-            background: #0f1419;
-            color: #60a5fa;
-            padding: 2px 6px;
-            border: 1px solid #2d3748;
-            border-radius: 6px;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-        }
+      code {
+        background: #0f1419;
+        color: #60a5fa;
+        padding: 2px 6px;
+        border: 1px solid #2d3748;
+        border-radius: 6px;
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div id="app">
-        <div class="container">
-            <div class="header">
-                <div>
-                    <h1>RF Chain Digital Twin</h1>
-                    <p>Real-time parameter control and signal analysis</p>
-                </div>
-                <div class="status" :class="connected ? 'connected' : 'disconnected'">
-                    <span class="status-indicator"></span>
-                    {{ connected ? 'Connected' : 'Connecting...' }}
-                </div>
+      <div class="container">
+        <div class="header">
+          <div>
+            <h1>RF Chain Digital Twin</h1>
+            <p>Real-time Parameter Control</p>
+          </div>
+          <div class="status" :class="connected ? 'connected' : 'disconnected'">
+            <span class="status-indicator"></span>
+            {{ connected ? 'Connected' : 'Connecting...' }}
+          </div>
+        </div>
+
+        <!-- Parameter Controls (User-Controlled) -->
+        <div class="panel">
+          <h2>Signal Parameters (Manual Control)</h2>
+
+          <div class="control-group">
+            <label class="label">Input Power (dBm)</label>
+            <div class="slider-container">
+              <input
+                type="range"
+                v-model.number="params.power_pre_lna_dbm"
+                min="-60"
+                max="20"
+                step="1"
+                @input="updateParams"
+              />
+              <span class="value-display"
+                >{{params.power_pre_lna_dbm.toFixed(1)}}</span
+              >
             </div>
+          </div>
 
-            <!-- Parameter Controls (User-Controlled) -->
-            <div class="panel">
-                <h2>Signal Parameters (Manual Control)</h2>
-                
-                <div class="control-group">
-                    <label class="label">Input Power (dBm)</label>
-                    <div class="slider-container">
-                        <input type="range" v-model.number="params.power_pre_lna_dbm" min="-60" max="20" step="1" @input="updateParams">
-                        <span class="value-display">{{params.power_pre_lna_dbm.toFixed(1)}}</span>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <label class="label">Bandwidth</label>
-                    <div class="button-group">
-                        <button 
-                            class="btn"
-                            :class="params.bandwidth_hz === 1e6 ? 'active' : 'inactive'"
-                            @click="setParam('bandwidth_hz', 1e6)">1 MHz</button>
-                        <button 
-                            class="btn"
-                            :class="params.bandwidth_hz === 10e6 ? 'active' : 'inactive'"
-                            @click="setParam('bandwidth_hz', 10e6)">10 MHz</button>
-                        <button 
-                            class="btn"
-                            :class="params.bandwidth_hz === 20e6 ? 'active' : 'inactive'"
-                            @click="setParam('bandwidth_hz', 20e6)">20 MHz</button>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <label class="label">Center Frequency</label>
-                    <div class="slider-container">
-                        <input
-                            type="range"
-                            :value="centerFreqMhz"
-                            min="2400"
-                            max="2440"
-                            step="1"
-                            @input="setCenterFreqMHz($event.target.value)">
-                        <span class="value-display">{{ centerFreqMhz }} MHz</span>
-                    </div>
-                </div>
+          <div class="control-group">
+            <label class="label">Bandwidth</label>
+            <div class="button-group">
+              <button
+                class="btn"
+                :class="params.bandwidth_hz === 1e6 ? 'active' : 'inactive'"
+                @click="setParam('bandwidth_hz', 1e6)"
+              >
+                1 MHz
+              </button>
+              <button
+                class="btn"
+                :class="params.bandwidth_hz === 10e6 ? 'active' : 'inactive'"
+                @click="setParam('bandwidth_hz', 10e6)"
+              >
+                10 MHz
+              </button>
+              <button
+                class="btn"
+                :class="params.bandwidth_hz === 20e6 ? 'active' : 'inactive'"
+                @click="setParam('bandwidth_hz', 20e6)"
+              >
+                20 MHz
+              </button>
             </div>
+          </div>
 
-            <!-- Measurements
+          <div class="control-group">
+            <label class="label">Center Frequency</label>
+            <div class="slider-container">
+              <input
+                type="range"
+                :value="centerFreqMhz"
+                min="2400"
+                max="2440"
+                step="1"
+                @input="setCenterFreqMHz($event.target.value)"
+              />
+              <span class="value-display">{{ centerFreqMhz }} MHz</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Measurements
             <div class="panel">
                 <h2>Real-Time Measurements</h2>
                 <div class="metrics-grid">
@@ -564,311 +603,330 @@
                 </div>
             </div> -->
 
-            <!-- Connection Status -->
-            <div v-if="error" class="panel error-message">
-                <h2>Error</h2>
-                <p>{{ error }}</p>
-            </div>
-
-            <div v-if="!connected" class="panel info-box">
-                <h2>Status</h2>
-                <p>Waiting to connect to RF Chain Dashboard backend on <code>ws://127.0.0.1:8877</code>...</p>
-                <p style="margin-top: 10px;">Ensure the RF chain worker and dashboard backend are running in digital_twin mode.</p>
-            </div>
+        <!-- Connection Status -->
+        <div v-if="error" class="panel error-message">
+          <h2>Error</h2>
+          <p>{{ error }}</p>
         </div>
+
+        <div v-if="!connected" class="panel info-box">
+          <h2>Status</h2>
+          <p>
+            Waiting to connect to RF Chain Dashboard backend on
+            <code>ws://127.0.0.1:8877</code>...
+          </p>
+          <p style="margin-top: 10px">
+            Ensure the RF chain worker and dashboard backend are running in
+            digital_twin mode.
+          </p>
+        </div>
+      </div>
     </div>
 
     <script>
-        const { createApp } = Vue;
+      const { createApp } = Vue;
 
-        createApp({
-            data() {
-                return {
-                    connected: false,
-                    ws: null,
-                    params: {
-                        power_pre_lna_dbm: -40.0,
-                        bandwidth_hz: 10e6,
-                        center_freq_hz: 2420e6,
-                        lna_voltage: 3.0,
-                        lo_power_dbm: 0.0,
-                        pa_gain_db: 10.0,
-                    },
-                    rfchainData: null,
-                    agentData: null,
-                    error: null,
-                    updateTimer: null,
-                    lnaClassLabel: { 0: '3V', 1: '5V' },
-                    bwClassLabel: { 0: '1 MHz', 1: '10 MHz', 2: '20 MHz' },
-                };
+      createApp({
+        data() {
+          return {
+            connected: false,
+            ws: null,
+            params: {
+              power_pre_lna_dbm: -40.0,
+              bandwidth_hz: 10e6,
+              center_freq_hz: 2420e6,
+              lna_voltage: 3.0,
+              lo_power_dbm: 0.0,
+              pa_gain_db: 10.0,
             },
-            methods: {
-                connectWebSocket() {
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const url = `${protocol}//127.0.0.1:8877`;
-                    
-                    try {
-                        this.ws = new WebSocket(url);
-                    } catch (e) {
-                        console.error('WebSocket creation error:', e);
-                        this.error = 'Failed to create WebSocket';
-                        return;
-                    }
-                    
-                    this.ws.onopen = () => {
-                        console.log('Connected to dashboard backend');
-                        this.connected = true;
-                        this.error = null;
-                        // Send initial parameters when connected
-                        this.updateParams();
-                    };
-                    
-                    this.ws.onmessage = (event) => {
-                        try {
-                            const msg = JSON.parse(event.data);
-                            
-                            if (msg.type === 'rfchain_update') {
-                                this.rfchainData = this.normalizeRfchainPayload(msg);
-                                if (msg.agent) {
-                                    this.agentData = msg.agent;
-                                }
-                                this.updateVisualizations();
-                            } else if (msg.type === 'error') {
-                                this.error = msg.message;
-                            }
-                        } catch (e) {
-                            console.error('Error parsing message:', e);
-                        }
-                    };
-                    
-                    this.ws.onerror = (event) => {
-                        console.error('WebSocket error:', event);
-                        this.connected = false;
-                    };
-                    
-                    this.ws.onclose = () => {
-                        console.log('Disconnected from dashboard backend');
-                        this.connected = false;
-                        // Attempt to reconnect after 2 seconds
-                        setTimeout(() => this.connectWebSocket(), 2000);
-                    };
-                },
-                setParam(key, value) {
-                    this.params[key] = value;
-                    this.updateParams();
-                },
-                setCenterFreqMHz(value) {
-                    const mhz = Number(value);
-                    if (!Number.isFinite(mhz)) {
-                        return;
-                    }
-                    this.params.center_freq_hz = Math.round(mhz) * 1e6;
-                    this.updateParams();
-                },
-                normalizeRfchainPayload(message) {
-                    if (!message || typeof message !== 'object') {
-                        return null;
-                    }
+            rfchainData: null,
+            agentData: null,
+            error: null,
+            updateTimer: null,
+            lnaClassLabel: { 0: "3V", 1: "5V" },
+            bwClassLabel: { 0: "1 MHz", 1: "10 MHz", 2: "20 MHz" },
+          };
+        },
+        methods: {
+          connectWebSocket() {
+            const protocol =
+              window.location.protocol === "https:" ? "wss:" : "ws:";
+            const url = `${protocol}//127.0.0.1:8877`;
 
-                    const candidates = [
-                        message.rfchain,
-                        message.payload,
-                        message.data,
-                        message.telemetry,
-                        message.result,
-                        message.value,
-                        message,
-                    ];
-
-                    for (const candidate of candidates) {
-                        if (candidate && typeof candidate === 'object') {
-                            const hasMetrics = [
-                                'power_pre_lna_dbm',
-                                'power_lna_dbm',
-                                'power_lna_raw',
-                                'power_post_pa_dbm',
-                                'power_pa_dbm',
-                                'power_pa_raw',
-                                'evm_percent',
-                                'evm_value',
-                                'processing_time_ms',
-                                'i_samples',
-                                'q_samples',
-                            ].some((key) => candidate[key] !== undefined);
-
-                            if (hasMetrics) {
-                                return candidate;
-                            }
-                        }
-                    }
-
-                    return null;
-                },
-                formatMetric(source, keys, digits = 2) {
-                    if (!source) {
-                        return '--';
-                    }
-
-                    for (const key of keys) {
-                        const value = source[key];
-                        const numeric = Number(value);
-                        if (Number.isFinite(numeric)) {
-                            return numeric.toFixed(digits);
-                        }
-                    }
-
-                    return '--';
-                },
-                updateParams() {
-                    if (this.connected && this.ws && this.ws.readyState === WebSocket.OPEN) {
-                        const msg = {
-                            action: 'update_params',
-                            params: this.params
-                        };
-                        console.log('Sending params:', msg);
-                        this.ws.send(JSON.stringify(msg));
-                    }
-                },
-                updateVisualizations() {
-                    if (!this.rfchainData) return;
-                    
-                    // Update constellation plot
-                    this.drawConstellation();
-                    
-                    // Update spectrum plot
-                    this.drawSpectrum();
-                },
-                drawConstellation() {
-                    const canvas = this.$refs.constellationCanvas;
-                    if (!canvas) return;
-
-                    const ctx = canvas.getContext('2d');
-                    const width = canvas.offsetWidth;
-                    const height = canvas.offsetHeight;
-
-                    canvas.width = width;
-                    canvas.height = height;
-
-                    // Clear background
-                    ctx.fillStyle = '#fff';
-                    ctx.fillRect(0, 0, width, height);
-
-                    // Draw grid
-                    ctx.strokeStyle = '#e0e0e0';
-                    ctx.lineWidth = 1;
-                    const centerX = width / 2;
-                    const centerY = height / 2;
-                    ctx.beginPath();
-                    ctx.moveTo(centerX, 0);
-                    ctx.lineTo(centerX, height);
-                    ctx.moveTo(0, centerY);
-                    ctx.lineTo(width, centerY);
-                    ctx.stroke();
-
-                    // Plot IQ points
-                    const i_samples = Array.isArray(this.rfchainData.i_samples) ? this.rfchainData.i_samples : [];
-                    const q_samples = Array.isArray(this.rfchainData.q_samples) ? this.rfchainData.q_samples : [];
-                    const scale = 50;
-
-                    ctx.fillStyle = '#667eea';
-                    ctx.globalAlpha = 0.6;
-
-                    if (i_samples.length === 0 || q_samples.length === 0) {
-                        ctx.globalAlpha = 1;
-                        ctx.fillStyle = '#999';
-                        ctx.font = '14px Segoe UI, sans-serif';
-                        ctx.fillText('Waiting for IQ samples...', 20, 30);
-                        return;
-                    }
-                    for (let i = 0; i < Math.min(i_samples.length, 1000); i += 4) {
-                        const x = centerX + i_samples[i] * scale;
-                        const y = centerY - q_samples[i] * scale;
-
-                        ctx.beginPath();
-                        ctx.arc(x, y, 2, 0, 2 * Math.PI);
-                        ctx.fill();
-                    }
-
-                    ctx.globalAlpha = 1;
-                },
-                drawSpectrum() {
-                    const canvas = this.$refs.spectrumCanvas;
-                    if (!canvas) return;
-
-                    const ctx = canvas.getContext('2d');
-                    const width = canvas.offsetWidth;
-                    const height = canvas.offsetHeight;
-
-                    canvas.width = width;
-                    canvas.height = height;
-
-                    // Clear background
-                    ctx.fillStyle = '#fff';
-                    ctx.fillRect(0, 0, width, height);
-
-                    // Draw axes
-                    ctx.strokeStyle = '#333';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(40, 10);
-                    ctx.lineTo(40, height - 30);
-                    ctx.lineTo(width - 10, height - 30);
-                    ctx.stroke();
-
-                    // Compute magnitude spectrum
-                    const i_samples = Array.isArray(this.rfchainData.i_samples) ? this.rfchainData.i_samples : [];
-                    const q_samples = Array.isArray(this.rfchainData.q_samples) ? this.rfchainData.q_samples : [];
-                    const n = Math.min(i_samples.length, q_samples.length, 512);
-
-                    if (n === 0) {
-                        ctx.fillStyle = '#999';
-                        ctx.font = '14px Segoe UI, sans-serif';
-                        ctx.fillText('Waiting for spectrum samples...', 50, 30);
-                        return;
-                    }
-
-                    let spectrum = new Array(n).fill(0);
-                    for (let i = 0; i < n; i++) {
-                        spectrum[i] = Math.sqrt(i_samples[i]**2 + q_samples[i]**2);
-                    }
-
-                    // Normalize
-                    const maxVal = Math.max(...spectrum);
-                    spectrum = spectrum.map(v => (v / (maxVal || 1)) * (height - 40));
-
-                    // Draw spectrum
-                    ctx.strokeStyle = '#667eea';
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-
-                    for (let i = 0; i < spectrum.length; i++) {
-                        const x = 40 + (i / spectrum.length) * (width - 50);
-                        const y = height - 30 - spectrum[i];
-
-                        if (i === 0) {
-                            ctx.moveTo(x, y);
-                        } else {
-                            ctx.lineTo(x, y);
-                        }
-                    }
-                    ctx.stroke();
-                }
-            },
-            computed: {
-                centerFreqMhz() {
-                    return Math.round(this.params.center_freq_hz / 1e6);
-                }
-            },
-            mounted() {
-                console.log('App mounted, connecting to WebSocket...');
-                this.connectWebSocket();
-            },
-            beforeUnmount() {
-                if (this.ws) {
-                    this.ws.close();
-                }
+            try {
+              this.ws = new WebSocket(url);
+            } catch (e) {
+              console.error("WebSocket creation error:", e);
+              this.error = "Failed to create WebSocket";
+              return;
             }
-        }).mount('#app');
+
+            this.ws.onopen = () => {
+              console.log("Connected to dashboard backend");
+              this.connected = true;
+              this.error = null;
+              // Send initial parameters when connected
+              this.updateParams();
+            };
+
+            this.ws.onmessage = (event) => {
+              try {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === "rfchain_update") {
+                  this.rfchainData = this.normalizeRfchainPayload(msg);
+                  if (msg.agent) {
+                    this.agentData = msg.agent;
+                  }
+                  this.updateVisualizations();
+                } else if (msg.type === "error") {
+                  this.error = msg.message;
+                }
+              } catch (e) {
+                console.error("Error parsing message:", e);
+              }
+            };
+
+            this.ws.onerror = (event) => {
+              console.error("WebSocket error:", event);
+              this.connected = false;
+            };
+
+            this.ws.onclose = () => {
+              console.log("Disconnected from dashboard backend");
+              this.connected = false;
+              // Attempt to reconnect after 2 seconds
+              setTimeout(() => this.connectWebSocket(), 2000);
+            };
+          },
+          setParam(key, value) {
+            this.params[key] = value;
+            this.updateParams();
+          },
+          setCenterFreqMHz(value) {
+            const mhz = Number(value);
+            if (!Number.isFinite(mhz)) {
+              return;
+            }
+            this.params.center_freq_hz = Math.round(mhz) * 1e6;
+            this.updateParams();
+          },
+          normalizeRfchainPayload(message) {
+            if (!message || typeof message !== "object") {
+              return null;
+            }
+
+            const candidates = [
+              message.rfchain,
+              message.payload,
+              message.data,
+              message.telemetry,
+              message.result,
+              message.value,
+              message,
+            ];
+
+            for (const candidate of candidates) {
+              if (candidate && typeof candidate === "object") {
+                const hasMetrics = [
+                  "power_pre_lna_dbm",
+                  "power_lna_dbm",
+                  "power_lna_raw",
+                  "power_post_pa_dbm",
+                  "power_pa_dbm",
+                  "power_pa_raw",
+                  "evm_percent",
+                  "evm_value",
+                  "processing_time_ms",
+                  "i_samples",
+                  "q_samples",
+                ].some((key) => candidate[key] !== undefined);
+
+                if (hasMetrics) {
+                  return candidate;
+                }
+              }
+            }
+
+            return null;
+          },
+          formatMetric(source, keys, digits = 2) {
+            if (!source) {
+              return "--";
+            }
+
+            for (const key of keys) {
+              const value = source[key];
+              const numeric = Number(value);
+              if (Number.isFinite(numeric)) {
+                return numeric.toFixed(digits);
+              }
+            }
+
+            return "--";
+          },
+          updateParams() {
+            if (
+              this.connected &&
+              this.ws &&
+              this.ws.readyState === WebSocket.OPEN
+            ) {
+              const msg = {
+                action: "update_params",
+                params: this.params,
+              };
+              console.log("Sending params:", msg);
+              this.ws.send(JSON.stringify(msg));
+            }
+          },
+          updateVisualizations() {
+            if (!this.rfchainData) return;
+
+            // Update constellation plot
+            this.drawConstellation();
+
+            // Update spectrum plot
+            this.drawSpectrum();
+          },
+          drawConstellation() {
+            const canvas = this.$refs.constellationCanvas;
+            if (!canvas) return;
+
+            const ctx = canvas.getContext("2d");
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+
+            canvas.width = width;
+            canvas.height = height;
+
+            // Clear background
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw grid
+            ctx.strokeStyle = "#e0e0e0";
+            ctx.lineWidth = 1;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            ctx.beginPath();
+            ctx.moveTo(centerX, 0);
+            ctx.lineTo(centerX, height);
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+            ctx.stroke();
+
+            // Plot IQ points
+            const i_samples = Array.isArray(this.rfchainData.i_samples)
+              ? this.rfchainData.i_samples
+              : [];
+            const q_samples = Array.isArray(this.rfchainData.q_samples)
+              ? this.rfchainData.q_samples
+              : [];
+            const scale = 50;
+
+            ctx.fillStyle = "#667eea";
+            ctx.globalAlpha = 0.6;
+
+            if (i_samples.length === 0 || q_samples.length === 0) {
+              ctx.globalAlpha = 1;
+              ctx.fillStyle = "#999";
+              ctx.font = "14px Segoe UI, sans-serif";
+              ctx.fillText("Waiting for IQ samples...", 20, 30);
+              return;
+            }
+            for (let i = 0; i < Math.min(i_samples.length, 1000); i += 4) {
+              const x = centerX + i_samples[i] * scale;
+              const y = centerY - q_samples[i] * scale;
+
+              ctx.beginPath();
+              ctx.arc(x, y, 2, 0, 2 * Math.PI);
+              ctx.fill();
+            }
+
+            ctx.globalAlpha = 1;
+          },
+          drawSpectrum() {
+            const canvas = this.$refs.spectrumCanvas;
+            if (!canvas) return;
+
+            const ctx = canvas.getContext("2d");
+            const width = canvas.offsetWidth;
+            const height = canvas.offsetHeight;
+
+            canvas.width = width;
+            canvas.height = height;
+
+            // Clear background
+            ctx.fillStyle = "#fff";
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw axes
+            ctx.strokeStyle = "#333";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(40, 10);
+            ctx.lineTo(40, height - 30);
+            ctx.lineTo(width - 10, height - 30);
+            ctx.stroke();
+
+            // Compute magnitude spectrum
+            const i_samples = Array.isArray(this.rfchainData.i_samples)
+              ? this.rfchainData.i_samples
+              : [];
+            const q_samples = Array.isArray(this.rfchainData.q_samples)
+              ? this.rfchainData.q_samples
+              : [];
+            const n = Math.min(i_samples.length, q_samples.length, 512);
+
+            if (n === 0) {
+              ctx.fillStyle = "#999";
+              ctx.font = "14px Segoe UI, sans-serif";
+              ctx.fillText("Waiting for spectrum samples...", 50, 30);
+              return;
+            }
+
+            let spectrum = new Array(n).fill(0);
+            for (let i = 0; i < n; i++) {
+              spectrum[i] = Math.sqrt(i_samples[i] ** 2 + q_samples[i] ** 2);
+            }
+
+            // Normalize
+            const maxVal = Math.max(...spectrum);
+            spectrum = spectrum.map((v) => (v / (maxVal || 1)) * (height - 40));
+
+            // Draw spectrum
+            ctx.strokeStyle = "#667eea";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            for (let i = 0; i < spectrum.length; i++) {
+              const x = 40 + (i / spectrum.length) * (width - 50);
+              const y = height - 30 - spectrum[i];
+
+              if (i === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+            ctx.stroke();
+          },
+        },
+        computed: {
+          centerFreqMhz() {
+            return Math.round(this.params.center_freq_hz / 1e6);
+          },
+        },
+        mounted() {
+          console.log("App mounted, connecting to WebSocket...");
+          this.connectWebSocket();
+        },
+        beforeUnmount() {
+          if (this.ws) {
+            this.ws.close();
+          }
+        },
+      }).mount("#app");
     </script>
-</body>
+  </body>
 </html>

@@ -383,6 +383,12 @@ start_rfchain_dashboard() {
   echo "[launcher] starting RF chain dashboard backend..."
   (
     cd "${ROOT_DIR}/rf_chain_dashboard"
+    # Ensure Python deps for the dashboard are installed in the chosen Python
+    if ! "${PYTHON_BIN}" -c "import websockets" >/dev/null 2>&1; then
+      echo "[launcher] installing rf_chain_dashboard Python requirements..."
+      "${PYTHON_BIN}" -m pip install --upgrade pip >/dev/null 2>&1 || true
+      "${PYTHON_BIN}" -m pip install -r requirements.txt >/dev/null 2>&1 || true
+    fi
     "${PYTHON_BIN}" app.py \
       --rfchain-socket "${RF_CHAIN_SOCKET_PATH}" \
       --inference-socket "${SOCKET_PATH}" \
@@ -398,7 +404,17 @@ wait_for_rfchain_dashboard() {
   local waited=0
   local port=8877
   echo "[launcher] waiting for RF chain dashboard to be ready on port ${port}..."
-  while ! timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/${port}" 2>/dev/null; do
+  # Portable port probe using Python (works on macOS and Linux)
+  while ! "${PYTHON_BIN}" - <<PYTHON
+import socket,sys
+try:
+    s=socket.create_connection(('127.0.0.1', ${port}), timeout=1)
+    s.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PYTHON
+  do
     sleep 0.2
     waited=$((waited + 1))
     if (( waited >= 50 )); then

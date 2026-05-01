@@ -3,12 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, max-age=0"
+    />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>
-      Multi-Agent Neurosymbolic AI for Self-Adapting RF Transceivers
-    </title>
+    <title>Multi-Agent AI for Self-Aware RF Systems</title>
     <style>
       :root {
         --bg-0: #0f1419;
@@ -56,8 +57,16 @@
         font-family: Inter, "Segoe UI", Roboto, sans-serif;
         color: var(--text-0);
         background:
-          radial-gradient(1200px 700px at 10% -10%, rgba(30, 58, 138, 0.15), transparent 60%),
-          radial-gradient(900px 600px at 95% 10%, rgba(15, 20, 25, 0.95), transparent 52%),
+          radial-gradient(
+            1200px 700px at 10% -10%,
+            rgba(30, 58, 138, 0.15),
+            transparent 60%
+          ),
+          radial-gradient(
+            900px 600px at 95% 10%,
+            rgba(15, 20, 25, 0.95),
+            transparent 52%
+          ),
           linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
         overflow: hidden;
       }
@@ -327,13 +336,27 @@
         background: var(--surface-0);
       }
 
-      .panel:nth-of-type(1) { animation-delay: 40ms; }
-      .panel:nth-of-type(2) { animation-delay: 80ms; }
-      .panel:nth-of-type(3) { animation-delay: 120ms; }
-      .panel:nth-of-type(4) { animation-delay: 160ms; }
-      .panel:nth-of-type(5) { animation-delay: 200ms; }
-      .panel:nth-of-type(6) { animation-delay: 240ms; }
-      .panel:nth-of-type(7) { animation-delay: 280ms; }
+      .panel:nth-of-type(1) {
+        animation-delay: 40ms;
+      }
+      .panel:nth-of-type(2) {
+        animation-delay: 80ms;
+      }
+      .panel:nth-of-type(3) {
+        animation-delay: 120ms;
+      }
+      .panel:nth-of-type(4) {
+        animation-delay: 160ms;
+      }
+      .panel:nth-of-type(5) {
+        animation-delay: 200ms;
+      }
+      .panel:nth-of-type(6) {
+        animation-delay: 240ms;
+      }
+      .panel:nth-of-type(7) {
+        animation-delay: 280ms;
+      }
 
       .panel-head {
         display: flex;
@@ -513,13 +536,34 @@
         fill: var(--accent-soft);
       }
 
-      #panel-lna-power { left: 2.5%; top: 12%; }
-      #panel-ifamp-power { right: 28%; top: 12%; }
-      #panel-evm { right: 3.5%; top: 10%; }
-      #panel-lna-agent { left: 16%; bottom: 22%; }
-      #panel-mixer-agent { left: 34%; bottom: 7%; }
-      #panel-filter-agent { right: 24%; bottom: 9%; }
-      #panel-ifamp-agent { right: 5%; bottom: 24%; }
+      #panel-lna-power {
+        left: 2.5%;
+        top: 12%;
+      }
+      #panel-ifamp-power {
+        right: 28%;
+        top: 12%;
+      }
+      #panel-evm {
+        right: 3.5%;
+        top: 10%;
+      }
+      #panel-lna-agent {
+        left: 16%;
+        bottom: 22%;
+      }
+      #panel-mixer-agent {
+        left: 34%;
+        bottom: 7%;
+      }
+      #panel-filter-agent {
+        right: 24%;
+        bottom: 9%;
+      }
+      #panel-ifamp-agent {
+        right: 5%;
+        bottom: 24%;
+      }
 
       .panel-anchor-right {
         right: -5px;
@@ -574,13 +618,34 @@
           width: min(30vw, 250px);
         }
 
-        #panel-lna-power { top: 9%; left: 2%; }
-        #panel-ifamp-power { top: 17%; right: 22%; }
-        #panel-evm { top: 9%; right: 2%; }
-        #panel-lna-agent { left: 8%; bottom: 23%; }
-        #panel-mixer-agent { left: 29%; bottom: 5%; }
-        #panel-filter-agent { right: 19%; bottom: 7%; }
-        #panel-ifamp-agent { right: 2%; bottom: 23%; }
+        #panel-lna-power {
+          top: 9%;
+          left: 2%;
+        }
+        #panel-ifamp-power {
+          top: 17%;
+          right: 22%;
+        }
+        #panel-evm {
+          top: 9%;
+          right: 2%;
+        }
+        #panel-lna-agent {
+          left: 8%;
+          bottom: 23%;
+        }
+        #panel-mixer-agent {
+          left: 29%;
+          bottom: 5%;
+        }
+        #panel-filter-agent {
+          right: 19%;
+          bottom: 7%;
+        }
+        #panel-ifamp-agent {
+          right: 2%;
+          bottom: 23%;
+        }
       }
 
       @media (max-width: 840px) {
@@ -609,13 +674,34 @@
           width: clamp(8px, 1.2vw, 14px);
         }
 
-        #panel-lna-power { left: 1%; top: 6%; }
-        #panel-ifamp-power { right: 12%; top: 16%; }
-        #panel-evm { right: 1%; top: 6%; }
-        #panel-lna-agent { left: 1%; bottom: 19%; }
-        #panel-mixer-agent { left: 27%; bottom: 3%; }
-        #panel-filter-agent { right: 27%; bottom: 3%; }
-        #panel-ifamp-agent { right: 1%; bottom: 19%; }
+        #panel-lna-power {
+          left: 1%;
+          top: 6%;
+        }
+        #panel-ifamp-power {
+          right: 12%;
+          top: 16%;
+        }
+        #panel-evm {
+          right: 1%;
+          top: 6%;
+        }
+        #panel-lna-agent {
+          left: 1%;
+          bottom: 19%;
+        }
+        #panel-mixer-agent {
+          left: 27%;
+          bottom: 3%;
+        }
+        #panel-filter-agent {
+          right: 27%;
+          bottom: 3%;
+        }
+        #panel-ifamp-agent {
+          right: 1%;
+          bottom: 19%;
+        }
       }
 
       @media (max-width: 600px) {
@@ -667,7 +753,8 @@
       <header class="topbar">
         <div class="title-wrap">
           <h1>
-            Multi-Agent Neurosymbolic AI for Self-Adapting RF Transceivers
+            Multi-Agent Artificial Intelligence for Self-Aware Radio Freqeuncy
+            Systems
           </h1>
         </div>
         <div class="status-wrap">
@@ -766,7 +853,7 @@
               <span class="kind">Control</span>
             </div>
             <div class="control-row">
-              <span class="label">Supply</span>
+              <span class="label">Supply Voltage</span>
               <span class="field mono" id="value-lna-class">--</span>
             </div>
             <div class="option-bank lna-bank" id="lna-bank">
@@ -789,7 +876,6 @@
                 <span class="option-label mono">5.0V</span>
               </div>
             </div>
-            <div class="subtle">AI voltage select command</div>
             <span
               class="anchor-point panel-anchor-top"
               id="anchor-panel-lna-agent"
@@ -802,7 +888,7 @@
               <span class="kind">Control</span>
             </div>
             <div class="control-row">
-              <span class="label">Oscillator Freq</span>
+              <span class="label">Oscillator Center Freq.</span>
               <span class="field mono" id="value-oscillator-freq">--.-</span>
             </div>
             <div class="control-row">
@@ -859,7 +945,6 @@
                 <span class="option-label mono">20M</span>
               </div>
             </div>
-            <div class="subtle">Bandwidth routing policy</div>
             <span
               class="anchor-point panel-anchor-top"
               id="anchor-panel-filter-agent"
@@ -968,9 +1053,9 @@
         };
 
         const CENTER_CLASS_MAP = {
-          0: "2405 MHz",
-          1: "2420 MHz",
-          2: "2435 MHz",
+          0: "2380 MHz",
+          1: "2395 MHz",
+          2: "2410 MHz",
         };
 
         const RANGE_MIXER_DBM = { min: -30, max: 15 };
@@ -1480,7 +1565,11 @@
             "lo_power_dbm",
             "valon_power_dbm",
           ]);
-          const evmValue = pickMetric(payload, ["evm_value", "evm_percent", "evm"]);
+          const evmValue = pickMetric(payload, [
+            "evm_value",
+            "evm_percent",
+            "evm",
+          ]);
           const evmDb = evmPercentToDb(evmValue);
           const processingTime = pickMetric(payload, [
             "processing_time_ms",
@@ -1522,7 +1611,7 @@
               ? formatFixed(loCenterMhz, 1, " MHz")
               : "--";
 
-          dom.mixerDbm.textContent = formatFixed(mixerDbm, 1);
+          dom.mixerDbm.textContent = formatFixed(mixerDbm + 10, 1);
           dom.ifampDb.textContent = formatFixed(payload.ifamp_db, 1);
 
           setMeter(dom.meterMixer, payload.mixer_dbm, RANGE_MIXER_DBM);
@@ -1564,7 +1653,12 @@
           const visited = new Set();
 
           function visit(node, depth) {
-            if (!node || typeof node !== "object" || visited.has(node) || depth > 4) {
+            if (
+              !node ||
+              typeof node !== "object" ||
+              visited.has(node) ||
+              depth > 4
+            ) {
               return NaN;
             }
 
