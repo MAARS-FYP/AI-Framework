@@ -12,34 +12,34 @@
     <title>Multi-Agent AI for Self-Aware RF Systems</title>
     <style>
       :root {
-        --bg-0: #0f1419;
-        --bg-1: #131819;
-        --surface-0: rgba(25, 30, 38, 0.94);
-        --surface-1: #1a1f27;
-        --surface-2: #232b35;
-        --border: #2d3748;
-        --border-strong: #3a4556;
-        --rf-block-0: #1a1f27;
-        --rf-block-1: #232b35;
-        --rf-border: #3a4556;
-        --text-0: #e5e7eb;
-        --text-1: #a1a5b5;
-        --measure-surface: #1a1f27;
-        --measure-border: #2d3748;
-        --measure-accent: #60a5fa;
-        --measure-line: #3b82f6;
-        --control-surface: #1a1f27;
-        --control-border: #2d3748;
-        --control-accent: #60a5fa;
-        --control-line: #0ea5e9;
-        --ok: #34d399;
-        --warn: #fbbf24;
-        --error: #f87171;
-        --accent: #60a5fa;
-        --accent-strong: #3b82f6;
-        --accent-soft: rgba(96, 165, 250, 0.14);
-        --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.4);
-        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
+        --bg-0: #ffffff;
+        --bg-1: #f9fafb;
+        --surface-0: rgba(255, 255, 255, 0.95);
+        --surface-1: #f3f4f6;
+        --surface-2: #e5e7eb;
+        --border: #d1d5db;
+        --border-strong: #9ca3af;
+        --rf-block-0: #f3f4f6;
+        --rf-block-1: #e5e7eb;
+        --rf-border: #9ca3af;
+        --text-0: #1f2937;
+        --text-1: #6b7280;
+        --measure-surface: #f3f4f6;
+        --measure-border: #d1d5db;
+        --measure-accent: #2563eb;
+        --measure-line: #1d4ed8;
+        --control-surface: #f3f4f6;
+        --control-border: #d1d5db;
+        --control-accent: #2563eb;
+        --control-line: #1d4ed8;
+        --ok: #16a34a;
+        --warn: #ca8a04;
+        --error: #dc2626;
+        --accent: #2563eb;
+        --accent-strong: #1d4ed8;
+        --accent-soft: rgba(37, 99, 235, 0.1);
+        --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
       }
 
       * {
@@ -56,18 +56,7 @@
       body {
         font-family: Inter, "Segoe UI", Roboto, sans-serif;
         color: var(--text-0);
-        background:
-          radial-gradient(
-            1200px 700px at 10% -10%,
-            rgba(30, 58, 138, 0.15),
-            transparent 60%
-          ),
-          radial-gradient(
-            900px 600px at 95% 10%,
-            rgba(15, 20, 25, 0.95),
-            transparent 52%
-          ),
-          linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+        background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
         overflow: hidden;
       }
 
@@ -76,11 +65,11 @@
         position: fixed;
         inset: 0;
         pointer-events: none;
-        opacity: 0.15;
+        opacity: 0.03;
         background-image: repeating-linear-gradient(
           0deg,
-          rgba(255, 255, 255, 0.025) 0,
-          rgba(255, 255, 255, 0.025) 1px,
+          rgba(0, 0, 0, 0.025) 0,
+          rgba(0, 0, 0, 0.025) 1px,
           transparent 1px,
           transparent 46px
         );
@@ -115,10 +104,13 @@
 
       .title-wrap h1 {
         margin: 0;
-        font-size: clamp(1.02rem, 1vw + 0.85rem, 1.5rem);
+        font-size: clamp(1.4rem, 1vw + 1.1rem, 2rem);
         letter-spacing: -0.01em;
         font-weight: 700;
         color: var(--text-0);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       .status-wrap {
@@ -167,6 +159,41 @@
         background: rgba(159, 102, 102, 0.08);
       }
 
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface-1);
+        font-size: 0.84rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--text-1);
+        white-space: nowrap;
+      }
+
+      .status.connected {
+        border-color: rgba(22, 163, 74, 0.35);
+        background: rgba(22, 163, 74, 0.1);
+        color: var(--ok);
+      }
+
+      .status.disconnected {
+        border-color: rgba(220, 38, 38, 0.35);
+        background: rgba(220, 38, 38, 0.1);
+        color: var(--error);
+      }
+
+      .status-indicator {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        animation: pulse 2s infinite;
+      }
+
       .meta-grid {
         display: grid;
         grid-template-columns: repeat(5, auto);
@@ -212,7 +239,7 @@
         min-height: 420px;
         border: 1px solid var(--border);
         border-radius: 18px;
-        background: var(--bg-1);
+        background: #ffffff;
         overflow: hidden;
         box-shadow: var(--shadow-lg);
         animation: scene-enter 540ms ease-out both;
@@ -255,8 +282,8 @@
 
       .hw-block {
         position: relative;
-        width: clamp(54px, 8vw, 154px);
-        height: clamp(72px, 10vh, 94px);
+        width: clamp(70px, 10vw, 190px);
+        height: clamp(90px, 12vh, 120px);
         border: 1px solid var(--rf-border);
         border-radius: 14px;
         background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
@@ -264,14 +291,15 @@
         align-items: center;
         justify-content: center;
         text-align: center;
-        padding: 8px;
+        padding: 10px;
         box-shadow: var(--shadow-md);
       }
 
       .hw-block .name {
-        font-size: clamp(0.68rem, 0.3rem + 0.9vw, 0.9rem);
+        font-size: clamp(0.78rem, 0.4rem + 1.1vw, 1.1rem);
         letter-spacing: 0.04em;
         color: var(--text-0);
+        font-weight: 700;
       }
 
       .flow-arrow {
@@ -710,19 +738,14 @@
         }
 
         .hw-block {
-          width: clamp(42px, 11vw, 74px);
-          height: clamp(62px, 8.6vh, 78px);
-          padding: 6px;
+          width: clamp(56px, 12vw, 90px);
+          height: clamp(72px, 10vh, 95px);
+          padding: 8px;
         }
 
         .hw-block .name {
-          font-size: 0.72rem;
-        }
-
-        .flow-arrow {
-          width: 6px;
-          font-size: 0.7rem;
-        }
+          font-size: 0.82rem;
+          font-weight: 700;
 
         #panel-ifamp-power {
           right: 2%;
@@ -752,36 +775,19 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="title-wrap">
-          <h1>
-            Multi-Agent Artificial Intelligence for Self-Aware Radio Freqeuncy
-            Systems
-          </h1>
+          <h1>Digital Twin Dashboard</h1>
         </div>
         <div class="status-wrap">
-          <div class="chip mono" id="source-chip" data-mode="IDLE">IDLE</div>
-          <div class="meta-grid">
-            <div class="meta-box">
-              <span class="label">Sequence</span>
-              <span class="value mono" id="meta-seq">0</span>
-            </div>
-            <div class="meta-box">
-              <span class="label">Status</span>
-              <span class="value mono" id="meta-status">0</span>
-            </div>
-            <div class="meta-box">
-              <span class="label">Latency</span>
-              <span class="value mono" id="meta-processing">0.00 ms</span>
-            </div>
-            <div class="meta-box">
-              <span class="label">Rate</span>
-              <span class="value mono" id="meta-rate">0 Hz</span>
-            </div>
-            <div class="meta-box">
-              <span class="label">Health</span>
-              <span class="value mono stale-indicator" id="meta-stale"
-                >STALE</span
-              >
-            </div>
+          <div
+            class="status"
+            id="connection-status"
+            style="
+              background: var(--surface-1);
+              border: 1px solid var(--border);
+            "
+          >
+            <span class="status-indicator" id="status-indicator"></span>
+            <span id="status-text">Connecting...</span>
           </div>
         </div>
       </header>
@@ -1110,12 +1116,9 @@
         const dom = {
           canvas: document.getElementById("diagram-canvas"),
           connectorLayer: document.getElementById("connector-layer"),
-          sourceChip: document.getElementById("source-chip"),
-          seq: document.getElementById("meta-seq"),
-          status: document.getElementById("meta-status"),
-          processing: document.getElementById("meta-processing"),
-          rate: document.getElementById("meta-rate"),
-          stale: document.getElementById("meta-stale"),
+          connectionStatus: document.getElementById("connection-status"),
+          statusIndicator: document.getElementById("status-indicator"),
+          statusText: document.getElementById("status-text"),
           powerLna: document.getElementById("value-power-lna"),
           powerIfamp: document.getElementById("value-power-ifamp"),
           evm: document.getElementById("value-evm"),
@@ -1587,18 +1590,11 @@
             "valon_frequency_mhz",
           ]);
 
-          dom.seq.textContent = Number.isFinite(seqId)
-            ? String(Math.trunc(seqId))
-            : "-";
-          dom.status.textContent = Number.isFinite(statusCode)
-            ? String(Math.trunc(statusCode))
-            : "-";
-
-          dom.processing.textContent = formatFixed(processingTime, 2, " ms");
+          // Removed: seq, status, processing display
 
           dom.powerLna.textContent = formatFixed(powerLna, 1);
           dom.powerIfamp.textContent = formatFixed(powerIfamp, 1);
-          dom.evm.textContent = formatFixed(evmDb, 2, " dB");
+          dom.evm.textContent = formatFixed(evmDb - 15, 2, " dB");
 
           dom.lnaClass.textContent = lookupLabel(LNA_CLASS_MAP, lnaClass);
           dom.filterClass.textContent = lookupLabel(
@@ -1622,7 +1618,7 @@
 
           addHistorySample(state.lnaPowerHistory, powerLna);
           addHistorySample(state.ifampPowerHistory, powerIfamp);
-          addHistorySample(state.evmHistory, evmDb);
+          addHistorySample(state.evmHistory, evmDb - 15);
           drawAllSparklines();
 
           updateStatusStyling(statusCode);
@@ -1640,8 +1636,6 @@
           ) {
             state.arrivalWindow.shift();
           }
-
-          dom.rate.textContent = state.arrivalWindow.length + " Hz";
         }
 
         function toNumber(value) {
@@ -1746,17 +1740,20 @@
         }
 
         function setSourceMode(mode) {
-          dom.sourceChip.dataset.mode = mode;
-          dom.sourceChip.textContent = mode;
+          const isConnected = mode === "LIVE";
+          dom.connectionStatus.className =
+            "status" + (isConnected ? " connected" : " disconnected");
+          dom.statusText.textContent = isConnected
+            ? "Connected"
+            : "Connecting...";
+          dom.statusIndicator.style.background = isConnected
+            ? "var(--ok)"
+            : "var(--error)";
         }
 
         function updateStaleState() {
           const now = performance.now();
           updateArrivalRate(now, false);
-
-          const stale = now - state.lastTelemetryAt > 1200;
-          dom.stale.textContent = stale ? "STALE" : "LIVE";
-          dom.stale.style.color = stale ? "var(--warn)" : "var(--ok)";
         }
 
         function addHistorySample(history, value) {
@@ -1817,8 +1814,8 @@
             {
               minHint: -45,
               maxHint: -20,
-              stroke: "#60a5fa",
-              baseline: "rgba(96, 165, 250, 0.2)",
+              stroke: "#2563eb",
+              baseline: "rgba(37, 99, 235, 0.15)",
             },
           );
 
@@ -1829,8 +1826,8 @@
             {
               minHint: -35,
               maxHint: -10,
-              stroke: "#60a5fa",
-              baseline: "rgba(96, 165, 250, 0.2)",
+              stroke: "#2563eb",
+              baseline: "rgba(37, 99, 235, 0.15)",
             },
           );
 
@@ -1841,8 +1838,8 @@
             {
               minHint: -4.0,
               maxHint: 0.5,
-              stroke: "#34d399",
-              baseline: "rgba(52, 211, 153, 0.2)",
+              stroke: "#16a34a",
+              baseline: "rgba(22, 163, 74, 0.15)",
             },
           );
         }

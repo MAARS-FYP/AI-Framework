@@ -3,27 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RF Chain Digital Twin</title>
+    <title>Transmitted Signal Properties</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
     <style>
       :root {
-        --bg-0: #0f1419;
-        --bg-1: #131819;
-        --surface-0: rgba(25, 30, 38, 0.94);
-        --surface-1: #1a1f27;
-        --surface-2: #232b35;
-        --border: #2d3748;
-        --border-strong: #3a4556;
-        --text-0: #e5e7eb;
-        --text-1: #a1a5b5;
-        --accent: #60a5fa;
-        --accent-strong: #3b82f6;
-        --accent-soft: rgba(96, 165, 250, 0.14);
-        --success: #34d399;
-        --warning: #fbbf24;
-        --error: #f87171;
-        --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.4);
-        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.3);
+        --bg-0: #ffffff;
+        --bg-1: #f9fafb;
+        --surface-0: rgba(255, 255, 255, 0.95);
+        --surface-1: #f3f4f6;
+        --surface-2: #e5e7eb;
+        --border: #d1d5db;
+        --border-strong: #9ca3af;
+        --text-0: #1f2937;
+        --text-1: #6b7280;
+        --accent: #2563eb;
+        --accent-strong: #1d4ed8;
+        --accent-soft: rgba(37, 99, 235, 0.1);
+        --success: #16a34a;
+        --warning: #ca8a04;
+        --error: #dc2626;
+        --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
       }
 
       * {
@@ -39,18 +39,7 @@
 
       body {
         font-family: Inter, "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background:
-          radial-gradient(
-            1200px 700px at 10% -10%,
-            rgba(30, 58, 138, 0.15),
-            transparent 60%
-          ),
-          radial-gradient(
-            900px 600px at 95% 10%,
-            rgba(15, 20, 25, 0.95),
-            transparent 52%
-          ),
-          linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+        background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
         color: var(--text-0);
         min-height: 100vh;
         padding: 22px;
@@ -61,11 +50,11 @@
         position: fixed;
         inset: 0;
         pointer-events: none;
-        opacity: 0.15;
+        opacity: 0.03;
         background-image: repeating-linear-gradient(
           0deg,
-          rgba(255, 255, 255, 0.025) 0,
-          rgba(255, 255, 255, 0.025) 1px,
+          rgba(0, 0, 0, 0.025) 0,
+          rgba(0, 0, 0, 0.025) 1px,
           transparent 1px,
           transparent 46px
         );
@@ -200,7 +189,7 @@
         flex: 1;
         height: 6px;
         border-radius: 999px;
-        background: linear-gradient(90deg, #2d3748, #3a4556);
+        background: linear-gradient(90deg, #d1d5db, #9ca3af);
         outline: none;
         appearance: none;
         -webkit-appearance: none;
@@ -212,9 +201,9 @@
         width: 18px;
         height: 18px;
         border-radius: 50%;
-        background: linear-gradient(180deg, #3b82f6, #1d4ed8);
-        border: 1px solid #0ea5e9;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        background: linear-gradient(180deg, #2563eb, #1d4ed8);
+        border: 1px solid #1d4ed8;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
         cursor: pointer;
         transition:
           transform 0.2s ease,
@@ -230,9 +219,9 @@
         width: 18px;
         height: 18px;
         border-radius: 50%;
-        background: linear-gradient(180deg, #3b82f6, #1d4ed8);
-        border: 1px solid #0ea5e9;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        background: linear-gradient(180deg, #2563eb, #1d4ed8);
+        border: 1px solid #1d4ed8;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
         cursor: pointer;
       }
 
@@ -240,7 +229,7 @@
         flex: 0 0 84px;
         text-align: right;
         font-weight: 700;
-        color: #60a5fa;
+        color: #2563eb;
         font-size: 0.88rem;
       }
 
@@ -269,24 +258,24 @@
 
       .btn:hover:not(.active) {
         transform: translateY(-1px);
-        border-color: #60a5fa;
-        box-shadow: 0 8px 18px rgba(96, 165, 250, 0.15);
+        border-color: #2563eb;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.1);
       }
 
       .btn.active,
       .btn-primary {
-        background: linear-gradient(180deg, #3b82f6, #1e40af);
+        background: linear-gradient(180deg, #2563eb, #1d4ed8);
         color: #ffffff;
-        border-color: #0ea5e9;
+        border-color: #1d4ed8;
         box-shadow:
-          0 0 20px rgba(59, 130, 246, 0.4),
-          0 8px 18px rgba(0, 0, 0, 0.2);
+          0 0 20px rgba(37, 99, 235, 0.3),
+          0 8px 18px rgba(0, 0, 0, 0.08);
         font-weight: 700;
       }
 
       .btn.inactive {
         background: var(--surface-2);
-        color: #8a93a1;
+        color: #9ca3af;
       }
 
       .metrics-grid {
@@ -297,7 +286,7 @@
       }
 
       .metric-card {
-        background: linear-gradient(180deg, #232b35, #1a1f27);
+        background: linear-gradient(180deg, #f3f4f6, #e5e7eb);
         color: var(--text-0);
         border: 1px solid var(--border);
         padding: 16px;
@@ -330,7 +319,7 @@
         border: 1px solid var(--border);
         border-radius: 14px;
         width: 100%;
-        background: #1a1f27;
+        background: #ffffff;
         margin-top: 10px;
       }
 
@@ -343,7 +332,7 @@
         height: 300px;
         border: 1px solid var(--border);
         border-radius: 14px;
-        background: #1a1f27;
+        background: #ffffff;
         position: relative;
       }
 
@@ -352,7 +341,7 @@
         height: 250px;
         border: 1px solid var(--border);
         border-radius: 14px;
-        background: #1a1f27;
+        background: #ffffff;
         margin-top: 15px;
       }
 
@@ -376,20 +365,20 @@
       }
 
       .error-message {
-        border-color: rgba(248, 113, 113, 0.35);
-        background: rgba(248, 113, 113, 0.08);
-        color: #fca5a5;
+        border-color: rgba(220, 38, 38, 0.35);
+        background: rgba(220, 38, 38, 0.08);
+        color: #991b1b;
       }
 
       .info-box {
-        border-color: rgba(96, 165, 250, 0.35);
-        background: rgba(96, 165, 250, 0.08);
-        color: #93c5fd;
+        border-color: rgba(37, 99, 235, 0.35);
+        background: rgba(37, 99, 235, 0.08);
+        color: #1e3a8a;
       }
 
       .agent-output {
-        border-color: rgba(60, 130, 246, 0.28);
-        background: linear-gradient(180deg, #232b35, #1a1f27);
+        border-color: rgba(37, 99, 235, 0.28);
+        background: linear-gradient(180deg, #f3f4f6, #e5e7eb);
       }
 
       .agent-output h3 {
@@ -439,10 +428,10 @@
       }
 
       code {
-        background: #0f1419;
-        color: #60a5fa;
+        background: #f3f4f6;
+        color: #2563eb;
         padding: 2px 6px;
-        border: 1px solid #2d3748;
+        border: 1px solid #d1d5db;
         border-radius: 6px;
         font-family: "Courier New", monospace;
         font-size: 12px;
@@ -454,8 +443,8 @@
       <div class="container">
         <div class="header">
           <div>
-            <h1>RF Chain Digital Twin</h1>
-            <p>Real-time Parameter Control</p>
+            <h1>Transmitted Signal Properties</h1>
+            <p>Real-time Control</p>
           </div>
           <div class="status" :class="connected ? 'connected' : 'disconnected'">
             <span class="status-indicator"></span>
@@ -465,10 +454,17 @@
 
         <!-- Parameter Controls (User-Controlled) -->
         <div class="panel">
-          <h2>Signal Parameters (Manual Control)</h2>
+          <h2>Transmitted Signal Properties</h2>
+          <p
+            style="
+              font-size: 0.85rem;
+              color: var(--text-1);
+              margin-bottom: 14px;
+            "
+          ></p>
 
           <div class="control-group">
-            <label class="label">Input Power (dBm)</label>
+            <label class="label">Signal Power (dBm)</label>
             <div class="slider-container">
               <input
                 type="range"
@@ -513,16 +509,28 @@
 
           <div class="control-group">
             <label class="label">Center Frequency</label>
-            <div class="slider-container">
-              <input
-                type="range"
-                :value="centerFreqMhz"
-                min="2400"
-                max="2440"
-                step="1"
-                @input="setCenterFreqMHz($event.target.value)"
-              />
-              <span class="value-display">{{ centerFreqMhz }} MHz</span>
+            <div class="button-group">
+              <button
+                class="btn"
+                :class="params.center_freq_hz === 2405e6 ? 'active' : 'inactive'"
+                @click="setParam('center_freq_hz', 2405e6)"
+              >
+                2405 MHz
+              </button>
+              <button
+                class="btn"
+                :class="params.center_freq_hz === 2420e6 ? 'active' : 'inactive'"
+                @click="setParam('center_freq_hz', 2420e6)"
+              >
+                2420 MHz
+              </button>
+              <button
+                class="btn"
+                :class="params.center_freq_hz === 2435e6 ? 'active' : 'inactive'"
+                @click="setParam('center_freq_hz', 2435e6)"
+              >
+                2435 MHz
+              </button>
             </div>
           </div>
         </div>
@@ -701,14 +709,6 @@
           },
           setParam(key, value) {
             this.params[key] = value;
-            this.updateParams();
-          },
-          setCenterFreqMHz(value) {
-            const mhz = Number(value);
-            if (!Number.isFinite(mhz)) {
-              return;
-            }
-            this.params.center_freq_hz = Math.round(mhz) * 1e6;
             this.updateParams();
           },
           normalizeRfchainPayload(message) {
@@ -912,11 +912,7 @@
             ctx.stroke();
           },
         },
-        computed: {
-          centerFreqMhz() {
-            return Math.round(this.params.center_freq_hz / 1e6);
-          },
-        },
+        computed: {},
         mounted() {
           console.log("App mounted, connecting to WebSocket...");
           this.connectWebSocket();
