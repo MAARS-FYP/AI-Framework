@@ -932,7 +932,7 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
             break;
         }
 
-        let mut power_pre_lna = -40.0 + (cycle as f32 % 20.0);
+        let mut input_power_dbm = -40.0 + (cycle as f32 % 20.0);
         let mut bandwidth_hz = match (cycle / 20) % 3 {
             0 => 1e6,
             1 => 10e6,
@@ -960,13 +960,13 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                 if let Ok(v) = m.parse::<i32>() { manual_mode = v; }
             }
             if manual_mode == 1 {
-                if let Some(v) = overrides.get("power_pre_lna_dbm") { if let Ok(f) = v.parse::<f32>() { power_pre_lna = f; } }
+                if let Some(v) = overrides.get("input_power_dbm") { if let Ok(f) = v.parse::<f32>() { input_power_dbm = f; } }
                 if let Some(v) = overrides.get("bandwidth_hz") { if let Ok(f) = v.parse::<f32>() { bandwidth_hz = f; } }
                 if let Some(v) = overrides.get("center_freq_hz") { if let Ok(f) = v.parse::<f32>() { center_freq_hz = f; } }
                 if let Some(v) = overrides.get("lna_voltage") { if let Ok(f) = v.parse::<f32>() { lna_voltage = f; } }
                 if let Some(v) = overrides.get("lo_power_dbm") { if let Ok(f) = v.parse::<f32>() { lo_power = f; } }
                 if let Some(v) = overrides.get("pa_gain_db") { if let Ok(f) = v.parse::<f32>() { pa_gain = f; } }
-                power_pre_lna = power_pre_lna.clamp(-60.0, 20.0);
+                input_power_dbm = input_power_dbm.clamp(-60.0, 20.0);
             }
         }
 
@@ -981,7 +981,7 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
 
         // Call RF chain worker
         match rfchain_client.process_signal(
-            power_pre_lna,
+            input_power_dbm,
             evaluation_bandwidth_hz,
             center_freq_hz,
             evaluation_lo_freq_hz,
@@ -992,12 +992,12 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
             Ok(rf_result) => {
                 if cfg.print_inference_results {
                     println!(
-                        "[digital_twin] Seq:{} Mode:{} BW:{:.1}MHz RF:{:.1}MHz Power(pre):{:.1}dBm EVM:{:.1}%",
+                        "[digital_twin] Seq:{} Mode:{} BW:{:.1}MHz RF:{:.1}MHz Input power:{:.1}dBm EVM:{:.1}%",
                         seq_id,
                         if manual_mode == 1 { "MANUAL" } else { "SWEEP" },
                         bandwidth_hz / 1e6,
                         center_freq_hz / 1e6,
-                        power_pre_lna,
+                        input_power_dbm,
                         rf_result.evm_percent
                     );
                 }
@@ -1034,7 +1034,7 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                     let req = InferenceRequest {
                         seq_id,
                         sample_rate_hz: cfg.sample_rate_hz,
-                        power_lna_dbm: rf_result.power_pre_lna_dbm,
+                        power_lna_dbm: rf_result.power_post_lna_dbm,
                         power_pa_dbm: rf_result.power_post_pa_dbm,
                         iq_iq_pairs: &iq_pairs,
                     };
@@ -1074,7 +1074,7 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                 }
 
                 let snapshot = format!(
-                    "seq_id={}\nstatus={}\nsource=digital_twin\ninference_ok={}\nmanual_mode={}\nstatus_code={}\nlna_class={}\nlna_voltage_v={:.1}\nfilter_class={}\nselected_filter_mhz={:.1}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.1}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nevm_percent={:.3}\nagent_evm_value={:.3}\npower_lna_dbm={:.3}\npower_pre_lna_dbm={:.3}\npower_pa_dbm={:.3}\npower_post_pa_dbm={:.3}\npower_lna_raw={:.3}\npower_pa_raw={:.3}\nprocessing_time_ms={:.3}\n",
+                    "seq_id={}\nstatus={}\nsource=digital_twin\ninference_ok={}\nmanual_mode={}\nstatus_code={}\nlna_class={}\nlna_voltage_v={:.1}\nfilter_class={}\nselected_filter_mhz={:.1}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.1}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nevm_percent={:.3}\nagent_evm_value={:.3}\npower_lna_dbm={:.3}\npower_pa_dbm={:.3}\npower_post_pa_dbm={:.3}\npower_lna_raw={:.3}\npower_pa_raw={:.3}\nprocessing_time_ms={:.3}\n",
                     seq_id,
                     rf_result.status,
                     if inference_ok { 1 } else { 0 },
@@ -1093,11 +1093,10 @@ fn run_digital_twin(cfg: &AppConfig) -> io::Result<()> {
                     rf_result.evm_percent,
                     rf_result.evm_percent,
                     agent_evm_value,
-                    rf_result.power_pre_lna_dbm,
-                    rf_result.power_pre_lna_dbm,
+                    rf_result.power_post_lna_dbm,
                     rf_result.power_post_pa_dbm,
                     rf_result.power_post_pa_dbm,
-                    rf_result.power_pre_lna_dbm,
+                    rf_result.power_post_lna_dbm,
                     rf_result.power_post_pa_dbm,
                     rf_result.processing_time_ms,
                 );
@@ -1125,7 +1124,7 @@ fn write_inference_snapshot(
     status_block: &str,
 ) -> io::Result<()> {
     let content = format!(
-        "seq_id={}\nstatus=ok\nsource=hardware\nstatus_code={}\nlna_class={}\nlna_voltage_v={}\nfilter_class={}\nselected_filter_mhz={:.3}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.3}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nevm_percent={:.3}\nprocessing_time_ms={:.3}\npower_lna_dbm={:.3}\npower_pre_lna_dbm={:.3}\npower_pa_dbm={:.3}\npower_post_pa_dbm={:.3}\npower_lna_raw={:.3}\npower_pa_raw={:.3}\nselected_filter_uart_cmd=filter {}\nuart_commands_sent:\n{}\nuart_status_values:\n{}\n",
+        "seq_id={}\nstatus=ok\nsource=hardware\nstatus_code={}\nlna_class={}\nlna_voltage_v={}\nfilter_class={}\nselected_filter_mhz={:.3}\nselected_filter_label={} MHz\ncenter_class={}\nlo_center_mhz={:.3}\nlo_power_dbm={:.3}\nmixer_dbm={:.3}\nifamp_db={:.3}\nevm_value={:.3}\nevm_percent={:.3}\nprocessing_time_ms={:.3}\npower_lna_dbm={:.3}\npower_pa_dbm={:.3}\npower_post_pa_dbm={:.3}\npower_lna_raw={:.3}\npower_pa_raw={:.3}\nselected_filter_uart_cmd=filter {}\nuart_commands_sent:\n{}\nuart_status_values:\n{}\n",
         resp.seq_id,
         resp.status_code,
         resp.lna_class,
@@ -1141,7 +1140,6 @@ fn write_inference_snapshot(
         resp.evm_value,
         resp.evm_value,
         resp.processing_time_ms,
-        power_lna_dbm,
         power_lna_dbm,
         power_pa_dbm,
         power_pa_dbm,

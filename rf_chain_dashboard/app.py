@@ -69,7 +69,7 @@ class RFChainDashboardBackend:
         self.clients: Set[WebSocketServerProtocol] = set()
         
         self.current_params = {
-            "power_pre_lna_dbm": -40.0,
+            "input_power_dbm": -40.0,
             "bandwidth_hz": 10e6,
             "center_freq_hz": 2420e6,
             "lna_voltage": 3.0,
@@ -83,8 +83,8 @@ class RFChainDashboardBackend:
 
     def _sanitize_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         cleaned = dict(params)
-        if "power_pre_lna_dbm" in cleaned:
-            cleaned["power_pre_lna_dbm"] = _clamp(float(cleaned["power_pre_lna_dbm"]), -60.0, 20.0)
+        if "input_power_dbm" in cleaned:
+            cleaned["input_power_dbm"] = _clamp(float(cleaned["input_power_dbm"]), -60.0, 20.0)
         if "bandwidth_hz" in cleaned:
             cleaned["bandwidth_hz"] = _clamp(float(cleaned["bandwidth_hz"]), 1e6, 60e6)
         if "center_freq_hz" in cleaned:
@@ -149,7 +149,7 @@ class RFChainDashboardBackend:
             self.seq_id += 1
             payload = pack_rfchain_request(
                 seq_id=self.seq_id,
-                power_pre_lna_dbm=self.current_params["power_pre_lna_dbm"],
+                input_power_dbm=self.current_params["input_power_dbm"],
                 bandwidth_hz=self.current_params["bandwidth_hz"],
                 center_freq_hz=self.current_params["center_freq_hz"],
                 lna_voltage=self.current_params["lna_voltage"],
@@ -173,9 +173,8 @@ class RFChainDashboardBackend:
                 "q_samples": resp["q_samples"].tolist(),
                 "evm_percent": float(resp["evm_percent"]),
                 "evm_value": float(resp["evm_percent"]),
-                "power_pre_lna_dbm": float(resp["power_pre_lna_dbm"]),
-                "power_lna_dbm": float(resp["power_pre_lna_dbm"]),
-                "power_lna_raw": float(resp["power_pre_lna_dbm"]),
+                "power_lna_dbm": float(resp["power_post_lna_dbm"]),
+                "power_lna_raw": float(resp["power_post_lna_dbm"]),
                 "power_post_pa_dbm": float(resp["power_post_pa_dbm"]),
                 "power_pa_dbm": float(resp["power_post_pa_dbm"]),
                 "power_pa_raw": float(resp["power_post_pa_dbm"]),
@@ -194,7 +193,7 @@ class RFChainDashboardBackend:
             payload = pack_infer_request(
                 seq_id=self.seq_id,
                 sample_rate_hz=125e6,
-                power_lna_dbm=self.current_params["power_pre_lna_dbm"],
+                power_lna_dbm=self.current_params["input_power_dbm"],
                 power_pa_dbm=self._last_power_post_pa if hasattr(self, "_last_power_post_pa") else -20.0,
                 iq_complex=iq_complex,
             )

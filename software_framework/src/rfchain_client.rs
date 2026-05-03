@@ -27,7 +27,7 @@ impl RFChainSocketClient {
 
     pub fn process_signal(
         &mut self,
-        power_pre_lna_dbm: f32,
+        input_power_dbm: f32,
         bandwidth_hz: f32,
         center_freq_hz: f32,
         lo_freq_hz: f32,
@@ -39,7 +39,7 @@ impl RFChainSocketClient {
 
         let req = RFChainRequest {
             seq_id,
-            power_pre_lna_dbm,
+            input_power_dbm,
             bandwidth_hz,
             center_freq_hz,
             lo_freq_hz,

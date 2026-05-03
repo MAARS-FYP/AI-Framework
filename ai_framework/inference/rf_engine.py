@@ -37,7 +37,7 @@ class RFChainOutput:
     i_samples: np.ndarray  # Shape: (n_samples,)
     q_samples: np.ndarray  # Shape: (n_samples,)
     evm_percent: float
-    power_pre_lna_dbm: float  # Input power (before LNA)
+    power_post_lna_dbm: float  # Power after LNA, before mixer
     power_post_pa_dbm: float  # Output power (after PA)
     processing_time_ms: float
     seq_id: int = 0
@@ -133,7 +133,7 @@ class RFChainEngine:
 
     def process(
         self,
-        power_pre_lna_dbm: float = -40.0,
+        input_power_dbm: float = -40.0,
         bandwidth_hz: float = 10e6,
         center_freq_hz: float = 2420e6,
         lo_freq_hz: float = 0.0,
@@ -147,7 +147,7 @@ class RFChainEngine:
         Process a random OFDM signal through the RF chain digital twin.
         
         Args:
-            power_pre_lna_dbm: Input signal power before LNA (-60 to +20 dBm)
+            input_power_dbm: Input signal power before LNA (-60 to +20 dBm)
             bandwidth_hz: Signal bandwidth (1e6, 10e6, or 20e6 Hz)
             center_freq_hz: Center frequency (for reference, not used in IF processing)
             lna_voltage: LNA supply voltage (3.0 or 5.0 V)
@@ -177,12 +177,12 @@ class RFChainEngine:
 
             # Normalize generated OFDM signal to requested pre-LNA input power.
             base_power_dbm = self.calculate_power_dbm(base_sig)
-            input_gain_db = power_pre_lna_dbm - base_power_dbm
+            input_gain_db = input_power_dbm - base_power_dbm
             base_sig = base_sig * (10 ** (input_gain_db / 20.0))
             
             # Create operating point and setting
             op_point = OperatingPoint(
-                power_pre_lna_dbm=power_pre_lna_dbm,
+                input_power_dbm=input_power_dbm,
                 bandwidth=bandwidth_hz,
                 center_freq=center_freq_hz
             )
@@ -196,10 +196,10 @@ class RFChainEngine:
             
             # Process through RF chain up to PA input
             logger.debug("Processing through RF chain (LNA → Mixer → Filter)")
-            x_pa_in = self.rf_chain.process_chain_pre_pa(base_sig, op_point, setting)
+            x_pa_in, power_post_lna = self.rf_chain.process_chain_pre_pa(base_sig, op_point, setting)
             
-            # Measure true input power after normalization (pre-LNA).
-            power_pre_lna = self.calculate_power_dbm(base_sig)
+            # Measure true input power after normalization.
+            input_power_dbm = self.calculate_power_dbm(base_sig)
             
             # Apply the final power scaling from the signal path to get accurate pre-PA measurement
             # The signal has been through LNA, mixer, filter
@@ -234,7 +234,7 @@ class RFChainEngine:
                 i_samples=i_samples,
                 q_samples=q_samples,
                 evm_percent=evm_percent,
-                power_pre_lna_dbm=power_pre_lna,
+                power_post_lna_dbm=power_post_lna,
                 power_post_pa_dbm=power_post_pa,
                 processing_time_ms=processing_time_ms,
                 seq_id=seq_id,
@@ -249,7 +249,7 @@ class RFChainEngine:
                 i_samples=np.array([], dtype=np.float32),
                 q_samples=np.array([], dtype=np.float32),
                 evm_percent=0.0,
-                power_pre_lna_dbm=0.0,
+                power_post_lna_dbm=0.0,
                 power_post_pa_dbm=0.0,
                 processing_time_ms=processing_time_ms,
                 seq_id=seq_id,

@@ -468,14 +468,14 @@
             <div class="slider-container">
               <input
                 type="range"
-                v-model.number="params.power_pre_lna_dbm"
+                v-model.number="params.input_power_dbm"
                 min="-60"
                 max="20"
                 step="1"
                 @input="updateParams"
               />
               <span class="value-display"
-                >{{params.power_pre_lna_dbm.toFixed(1)}}</span
+                >{{params.input_power_dbm.toFixed(1)}}</span
               >
             </div>
           </div>
@@ -542,7 +542,7 @@
                     <div class="metric-card">
                         <div class="metric-label">Pre-LNA Power</div>
                         <div class="metric-value">
-                            {{ formatMetric(rfchainData, ['power_pre_lna_dbm', 'power_lna_dbm', 'power_lna_raw'], 1) }}
+                            {{ formatMetric(rfchainData, ['power_post_lna_dbm', 'power_lna_dbm', 'power_lna_raw'], 1) }}
                             <span class="metric-unit">dBm</span>
                         </div>
                     </div>
@@ -640,7 +640,7 @@
             connected: false,
             ws: null,
             params: {
-              power_pre_lna_dbm: -40.0,
+              input_power_dbm: -40.0,
               bandwidth_hz: 10e6,
               center_freq_hz: 2420e6,
               lna_voltage: 3.0,
@@ -729,7 +729,7 @@
             for (const candidate of candidates) {
               if (candidate && typeof candidate === "object") {
                 const hasMetrics = [
-                  "power_pre_lna_dbm",
+                  "power_post_lna_dbm",
                   "power_lna_dbm",
                   "power_lna_raw",
                   "power_post_pa_dbm",

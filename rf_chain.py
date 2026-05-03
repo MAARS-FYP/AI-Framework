@@ -16,7 +16,7 @@ LNA_DATA_PATH = "predictions_at_30.0C.csv"
 
 @dataclass
 class OperatingPoint:
-    power_pre_lna_dbm: float
+    input_power_dbm: float
     bandwidth: float 
     center_freq: float = FC_RF
 
@@ -159,7 +159,7 @@ class RFChain:
         return signal.sosfilt(sos, signal_in)
 
     def process_chain_pre_pa(self, base_signal, op_point: OperatingPoint, setting: Setting):
-        target_pow_lin = self._dbm_to_linear(op_point.power_pre_lna_dbm)
+        target_pow_lin = self._dbm_to_linear(op_point.input_power_dbm)
         current_pow = np.mean(np.abs(base_signal)**2)
         scale_factor = np.sqrt(target_pow_lin / (current_pow + 1e-12))
         tx_bb = base_signal * scale_factor
@@ -173,6 +173,7 @@ class RFChain:
         
         lna_params = self.get_lna_params(setting.lna_voltage)
         rx_rf_amp = self.lna_model(tx_rf, lna_params, op_point.bandwidth, FS_RF)
+        power_post_lna_dbm = 10 * np.log10(np.mean(np.abs(rx_rf_amp) ** 2) + 1e-12)
         
         fc_lo = setting.lo_freq_hz
         if fc_lo <= 0.0:
@@ -197,7 +198,7 @@ class RFChain:
         
         gain_linear = 10**(setting.pa_drive_db / 20.0)
         pa_in = rx_if_analytic  * gain_linear
-        return pa_in
+        return pa_in, power_post_lna_dbm
 
     def generate_variable_bw_ofdm(self, bandwidth_hz: float, num_symbols: int = 30):
         """

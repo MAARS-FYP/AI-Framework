@@ -99,7 +99,7 @@ class RFChainSocketWorker:
         """
         try:
             output = self.engine.process(
-                power_pre_lna_dbm=req["power_pre_lna_dbm"],
+                input_power_dbm=req["input_power_dbm"],
                 bandwidth_hz=req["bandwidth_hz"],
                 center_freq_hz=req["center_freq_hz"],
                 lo_freq_hz=req.get("lo_freq_hz", 0.0),
@@ -112,7 +112,7 @@ class RFChainSocketWorker:
             
             logger.debug(
                 f"RF chain processed: EVM={output.evm_percent:.2f}%, "
-                f"power_pre_lna={output.power_pre_lna_dbm:.2f}dBm, "
+                f"power_post_lna={output.power_post_lna_dbm:.2f}dBm, "
                 f"power_post_pa={output.power_post_pa_dbm:.2f}dBm"
             )
             
@@ -122,7 +122,7 @@ class RFChainSocketWorker:
                 i_samples=output.i_samples,
                 q_samples=output.q_samples,
                 evm_percent=output.evm_percent,
-                power_pre_lna_dbm=output.power_pre_lna_dbm,
+                power_post_lna_dbm=output.power_post_lna_dbm,
                 power_post_pa_dbm=output.power_post_pa_dbm,
                 processing_time_ms=output.processing_time_ms,
             )

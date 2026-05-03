@@ -1552,10 +1552,9 @@
           updateArrivalRate(state.lastTelemetryAt, true);
 
           const powerLna = pickMetric(payload, [
+            "power_post_lna_dbm",
             "power_lna_raw",
             "power_lna_dbm",
-            "power_pre_lna_dbm",
-            "power_pre_lna",
           ]);
           const powerIfamp = pickMetric(payload, [
             "power_pa_raw",
@@ -1721,22 +1720,7 @@
         }
 
         function updateStatusStyling(statusCode) {
-          if (!Number.isFinite(statusCode)) {
-            dom.status.style.color = "var(--text-0)";
-            return;
-          }
-
-          if (statusCode === 0) {
-            dom.status.style.color = "var(--ok)";
-            return;
-          }
-
-          if (statusCode === 1) {
-            dom.status.style.color = "var(--warn)";
-            return;
-          }
-
-          dom.status.style.color = "var(--error)";
+          void statusCode;
         }
 
         function setSourceMode(mode) {

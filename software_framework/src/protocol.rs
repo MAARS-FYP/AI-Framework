@@ -51,7 +51,7 @@ pub struct InferenceShmRequest {
 #[derive(Debug, Clone)]
 pub struct RFChainRequest {
     pub seq_id: u64,
-    pub power_pre_lna_dbm: f32,
+    pub input_power_dbm: f32,
     pub bandwidth_hz: f32,
     pub center_freq_hz: f32,
     pub lo_freq_hz: f32,
@@ -68,7 +68,7 @@ pub struct RFChainResponse {
     pub i_samples: Vec<f32>,
     pub q_samples: Vec<f32>,
     pub evm_percent: f32,
-    pub power_pre_lna_dbm: f32,
+    pub power_post_lna_dbm: f32,
     pub power_post_pa_dbm: f32,
     pub processing_time_ms: f32,
 }
@@ -214,7 +214,7 @@ pub fn unpack_ping(payload: &[u8]) -> io::Result<u64> {
 pub fn pack_rfchain_request(req: &RFChainRequest) -> Vec<u8> {
     let mut payload = Vec::with_capacity(44);
     payload.extend_from_slice(&req.seq_id.to_le_bytes());
-    payload.extend_from_slice(&req.power_pre_lna_dbm.to_le_bytes());
+    payload.extend_from_slice(&req.input_power_dbm.to_le_bytes());
     payload.extend_from_slice(&req.bandwidth_hz.to_le_bytes());
     payload.extend_from_slice(&req.center_freq_hz.to_le_bytes());
     payload.extend_from_slice(&req.lo_freq_hz.to_le_bytes());
@@ -236,7 +236,7 @@ pub fn unpack_rfchain_response(payload: &[u8]) -> io::Result<RFChainResponse> {
     let seq_id = u64::from_le_bytes(payload[0..8].try_into().unwrap());
     let status_len = u32::from_le_bytes(payload[8..12].try_into().unwrap()) as usize;
     let evm_percent = f32::from_le_bytes(payload[12..16].try_into().unwrap());
-    let power_pre_lna_dbm = f32::from_le_bytes(payload[16..20].try_into().unwrap());
+    let power_post_lna_dbm = f32::from_le_bytes(payload[16..20].try_into().unwrap());
     let power_post_pa_dbm = f32::from_le_bytes(payload[20..24].try_into().unwrap());
     let processing_time_ms = f32::from_le_bytes(payload[24..28].try_into().unwrap());
 
@@ -304,7 +304,7 @@ pub fn unpack_rfchain_response(payload: &[u8]) -> io::Result<RFChainResponse> {
         i_samples,
         q_samples,
         evm_percent,
-        power_pre_lna_dbm,
+        power_post_lna_dbm,
         power_post_pa_dbm,
         processing_time_ms,
     })

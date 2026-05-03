@@ -81,7 +81,7 @@ This implementation extends the AI Framework with a **digital twin** of the RF s
 ```
 [Meta]
   seq_id (u64):              Sequence identifier
-  power_pre_lna_dbm (f32):   Input power before LNA (-60 to -20 dBm)
+  input_power_dbm (f32):     Input power before LNA (-60 to -20 dBm)
   bandwidth_hz (f32):        Signal bandwidth (1e6, 10e6, or 20e6 Hz)
   center_freq_hz (f32):      Center frequency (2405e6, 2420e6, 2435e6 Hz)
   lna_voltage (f32):         LNA supply voltage (3.0 or 5.0 V)
@@ -99,7 +99,7 @@ This implementation extends the AI Framework with a **digital twin** of the RF s
   seq_id (u64):              Echo of request seq_id
   status_len (u32):          Length of status string (bytes)
   evm_percent (f32):         Error Vector Magnitude (%)
-  power_pre_lna_dbm (f32):   Input power measurement (dBm)
+  power_lna_dbm (f32):       Input power measurement (dBm)
   power_post_pa_dbm (f32):   Output power measurement (dBm)
   processing_time_ms (f32):  Execution time (milliseconds)
 
@@ -121,6 +121,7 @@ bash launch_dashboard.sh
 ```
 
 This starts:
+
 - RF chain worker on `/tmp/maars_rfchain.sock`
 - Dashboard backend on `127.0.0.1:8877`
 - Opens dashboard in your default browser
@@ -132,6 +133,7 @@ This starts:
 ```
 
 This starts:
+
 - Python inference worker (optional, for AI recommendations)
 - Python RF chain worker
 - Rust orchestrator in digital twin mode
@@ -141,6 +143,7 @@ This starts:
 ### 3. Access the Dashboard
 
 Open in web browser:
+
 - Standalone: File URL shown in launch script output (usually `file:///path/to/rf_chain_dashboard/index.html`)
 - With backend: `ws://127.0.0.1:8877` (via the app.py WebSocket connection)
 
@@ -167,6 +170,7 @@ Open in web browser:
 ### AI Recommendations (Optional)
 
 When inference worker is available, displays:
+
 - Suggested LNA class (3V or 5V)
 - Recommended LO power (dBm)
 - Recommended IF amplifier gain (dB)
@@ -231,22 +235,22 @@ python rf_chain_dashboard/app.py \
 
 ### Measurements Provided
 
-| Point | Description | Unit |
-|-------|-------------|------|
-| Pre-LNA Power | Input signal power (before amplification) | dBm |
-| Post-PA Power | Output signal power (after distortion) | dBm |
-| EVM | Error Vector Magnitude (blind calculation) | % |
-| Processing Time | RF chain simulation execution time | ms |
+| Point           | Description                                | Unit |
+| --------------- | ------------------------------------------ | ---- |
+| Pre-LNA Power   | Input signal power (before amplification)  | dBm  |
+| Post-PA Power   | Output signal power (after distortion)     | dBm  |
+| EVM             | Error Vector Magnitude (blind calculation) | %    |
+| Processing Time | RF chain simulation execution time         | ms   |
 
 ### Digital Twin Parameter Ranges
 
-| Parameter | Min | Max | Step | Type |
-|-----------|-----|-----|------|------|
-| Power (dBm) | -60 | -20 | 1 | Continuous |
-| Bandwidth | 1M / 10M / 20M | — | — | Discrete |
-| LNA Voltage | 3.0 | 5.0 | — | Discrete |
-| LO Power (dBm) | -13.75 | +20 | 0.5 | Continuous |
-| PA Gain (dB) | -6 | +26 | 1 | Continuous |
+| Parameter      | Min            | Max | Step | Type       |
+| -------------- | -------------- | --- | ---- | ---------- |
+| Power (dBm)    | -60            | -20 | 1    | Continuous |
+| Bandwidth      | 1M / 10M / 20M | —   | —    | Discrete   |
+| LNA Voltage    | 3.0            | 5.0 | —    | Discrete   |
+| LO Power (dBm) | -13.75         | +20 | 0.5  | Continuous |
+| PA Gain (dB)   | -6             | +26 | 1    | Continuous |
 
 ## Architecture Diagram
 

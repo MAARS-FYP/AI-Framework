@@ -135,7 +135,7 @@ class SenderState:
         self.power_lna_raw = float(
             snapshot.get(
                 "power_lna_raw",
-                snapshot.get("power_lna_dbm", snapshot.get("power_pre_lna_dbm", snapshot.get("power_pre_lna", self.power_lna_raw))),
+                snapshot.get("power_lna_dbm", self.power_lna_raw),
             )
         )
         self.power_pa_raw = float(
@@ -167,7 +167,6 @@ class SenderState:
             "power_lna_raw": round(self.power_lna_raw, 2),
             "power_pa_raw": round(self.power_pa_raw, 2),
             "power_lna_dbm": round(self.power_lna_raw, 2),
-            "power_pre_lna_dbm": round(self.power_lna_raw, 2),
             "power_pa_dbm": round(self.power_pa_raw, 2),
             "power_post_pa_dbm": round(self.power_pa_raw, 2),
             "evm_value": round(self.evm_value, 2),

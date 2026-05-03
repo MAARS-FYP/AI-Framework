@@ -233,7 +233,7 @@ def unpack_error(payload: bytes) -> str:
 
 def pack_rfchain_request(
     seq_id: int,
-    power_pre_lna_dbm: float,
+    input_power_dbm: float,
     bandwidth_hz: float,
     center_freq_hz: float,
     lo_freq_hz: float,
@@ -246,7 +246,7 @@ def pack_rfchain_request(
     meta = struct.pack(
         RFCHAIN_REQ_META_FMT,
         int(seq_id),
-        float(power_pre_lna_dbm),
+        float(input_power_dbm),
         float(bandwidth_hz),
         float(center_freq_hz),
         float(lo_freq_hz),
@@ -264,12 +264,12 @@ def unpack_rfchain_request(payload: bytes) -> Dict[str, object]:
         raise ValueError(
             f"RF chain request payload size mismatch: got {len(payload)}, expected {RFCHAIN_REQ_META_SIZE}"
         )
-    seq_id, power_pre_lna_dbm, bandwidth_hz, center_freq_hz, lo_freq_hz, lna_voltage, lo_power_dbm, pa_gain_db, num_symbols = struct.unpack(
+    seq_id, input_power_dbm, bandwidth_hz, center_freq_hz, lo_freq_hz, lna_voltage, lo_power_dbm, pa_gain_db, num_symbols = struct.unpack(
         RFCHAIN_REQ_META_FMT, payload
     )
     return {
         "seq_id": int(seq_id),
-        "power_pre_lna_dbm": float(power_pre_lna_dbm),
+        "input_power_dbm": float(input_power_dbm),
         "bandwidth_hz": float(bandwidth_hz),
         "center_freq_hz": float(center_freq_hz),
         "lo_freq_hz": float(lo_freq_hz),
@@ -286,7 +286,7 @@ def pack_rfchain_response(
     i_samples: np.ndarray,
     q_samples: np.ndarray,
     evm_percent: float,
-    power_pre_lna_dbm: float,
+    power_post_lna_dbm: float,
     power_post_pa_dbm: float,
     processing_time_ms: float,
 ) -> bytes:
@@ -304,7 +304,7 @@ def pack_rfchain_response(
         int(seq_id),
         len(status_bytes),
         float(evm_percent),
-        float(power_pre_lna_dbm),
+        float(power_post_lna_dbm),
         float(power_post_pa_dbm),
         float(processing_time_ms),
     )
@@ -322,7 +322,7 @@ def unpack_rfchain_response(payload: bytes) -> Dict[str, object]:
     if len(payload) < RFCHAIN_RESP_META_SIZE:
         raise ValueError("RF chain response payload too small for header")
     
-    seq_id, status_len, evm_percent, power_pre_lna_dbm, power_post_pa_dbm, processing_time_ms = struct.unpack(
+    seq_id, status_len, evm_percent, power_post_lna_dbm, power_post_pa_dbm, processing_time_ms = struct.unpack(
         RFCHAIN_RESP_META_FMT, payload[:RFCHAIN_RESP_META_SIZE]
     )
     
@@ -356,7 +356,7 @@ def unpack_rfchain_response(payload: bytes) -> Dict[str, object]:
         "i_samples": i_data,
         "q_samples": q_data,
         "evm_percent": float(evm_percent),
-        "power_pre_lna_dbm": float(power_pre_lna_dbm),
+        "power_post_lna_dbm": float(power_post_lna_dbm),
         "power_post_pa_dbm": float(power_post_pa_dbm),
         "processing_time_ms": float(processing_time_ms),
     }

@@ -115,12 +115,12 @@ if GENERATE_DATA:
                         # Fixed PA Drive (Hardware does not have a variable driver amp)
                         pa_drive = 0.0
                         
-                        op = OperatingPoint(power_pre_lna_dbm=pwr, bandwidth=bw)
+                        op = OperatingPoint(input_power_dbm=pwr, bandwidth=bw)
                         # Pass LO Power to Setting
                         setting = Setting(lna_voltage=v, pa_drive_db=pa_drive, lo_power_dbm=lo_pwr)
                         
                         # Run chain up to PA input
-                        x_pa_in = rf_chain.process_chain_pre_pa(base_sig, op, setting)
+                        x_pa_in, _ = rf_chain.process_chain_pre_pa(base_sig, op, setting)
                     
                         # Apply Ground Truth PA Model (Parametric)
                         y_pa_out = apply_pa_distortion(x_pa_in, gain_db=g_db)
